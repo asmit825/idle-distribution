@@ -118,8 +118,8 @@ export class CameraController {
   }
 
   /** Frames a new floor layout, keeping the view angle, zoom, and pan. */
-  setFloor(bays: readonly StagingBay[]) {
-    this.stagedPoints = stagedPoints(bays);
+  setFloor(bays: readonly StagingBay[], equipment: readonly Box3[] = []) {
+    this.stagedPoints = [...stagedPoints(bays), ...equipment.flatMap(corners)];
     if (this.fitDistance) this.reframe();
   }
 

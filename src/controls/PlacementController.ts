@@ -44,6 +44,8 @@ export interface PlacementControllerOptions {
   bays?: readonly StagingBay[];
   /** Whether a bay refills after its case is placed (the sandbox), or stays empty (Mode 1). */
   refill?: boolean;
+  /** False when equipment renders the waiting cartons and supplies their live positions. */
+  renderBays?: boolean;
   /** Asked as a case leaves the floor; false refuses the pick. */
   pick?: (bay: StagingBay) => boolean;
   /** Asked before a held case lands in a valid spot; false returns it to the floor. */
@@ -112,8 +114,21 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
       if (this.emptied.has(bay.id)) continue;
       const carton = orient(createBoxMesh(bay.sku), bay.yaw);
       carton.position.copy(bay.position);
+      carton.visible = this.options.renderBays !== false;
       this.bayCartons.set(bay, carton);
       this.options.parent.add(carton);
+    }
+  }
+
+  /** Moves a live equipment bay without cancelling its drag or replacing its identity. */
+  moveBay(id: number, position: Vector3) {
+    for (const [bay, carton] of this.bayCartons) {
+      if (bay.id !== id) continue;
+      bay.bounds.translate(position.clone().sub(bay.position));
+      bay.position.copy(position);
+      carton.position.copy(position);
+      this.updateOutline();
+      break;
     }
   }
 
@@ -325,7 +340,7 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
 
   /** Ends the drag: the held carton goes away and its bay is full again. */
   private release() {
-    if (this.heldCase) this.bayCartons.get(this.heldCase.bay)!.visible = true;
+    if (this.heldCase) this.bayCartons.get(this.heldCase.bay)!.visible = this.options.renderBays !== false;
     this.heldCase = undefined;
     this.removeHeldCarton();
     this.ghost.hide();

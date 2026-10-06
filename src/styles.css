@@ -83,3 +83,35 @@ kbd { font: 10px ui-monospace, monospace; color: #8fa2b3; border: 1px solid #fff
   .case-actions { left: 18px; bottom: 10px; max-width: calc(100% - 36px); }
   footer { padding: 9px 18px; }
 }
+
+.mode-switch { display: flex; gap: 5px; }
+.mode-switch button, .sound-toggle { padding: 8px 10px; color: #a5b9c8; background: #192530; border: 1px solid #ffffff1a; border-radius: 6px; cursor: pointer; font-size: 11px; }
+.mode-switch button[aria-pressed="true"] { color: #ffe0ab; border-color: #dfa855; }
+.conveyor-telemetry { margin-top: 14px; padding: 12px 14px; border-radius: 8px; background: #101826dc; border: 1px solid #ffffff18; }
+.conveyor-telemetry dl { display: flex; gap: 22px; margin: 10px 0 0; font-size: 11px; }
+.conveyor-telemetry dt { color: #8fa2b3; margin-bottom: 3px; }
+.conveyor-telemetry dd { margin: 0; font: 12px ui-monospace, monospace; }
+.signal { display: inline-flex; gap: 7px; align-items: center; font-size: 12px; color: #4ade94; }
+.signal::before { content: ''; width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+.yellow .signal { color: #ffcc3b; }
+.red .signal { color: #ff5f62; }
+.yellow:not(.stopped) .signal::before, .red:not(.stopped) .signal::before { animation: conveyor-warning .9s infinite alternate; }
+@keyframes conveyor-warning { to { opacity: .25; } }
+@media (max-width: 1200px) { .header .engine-status { display: none; } }
+@media (max-width: 650px) {
+  .mode-switch { order: 3; width: 100%; }
+  .mode-switch button { flex: 1; min-height: 36px; }
+  .conveyor-telemetry dl { gap: 13px; }
+  .conveyor-telemetry { margin-top: 8px; padding: 8px 10px; }
+}
+@media (max-height: 500px) {
+  .header { gap: 8px; }
+  .mode-switch { order: initial; width: auto; }
+  .conveyor-telemetry { margin-top: 5px; padding: 6px 10px; display: flex; gap: 14px; align-items: center; }
+  .conveyor-telemetry dl { margin: 0; gap: 14px; }
+  .conveyor-telemetry dt { display: none; }
+}
+@media (prefers-reduced-motion: reduce) { .signal::before { animation: none !important; } }
+
+.sound-toggle { white-space: nowrap; }
+@media (max-width: 650px) { .mode2 .brand { flex: 1; } .mode2 .shift-controls { order: 2; } .sound-toggle { order: 2; margin-left: auto; } }

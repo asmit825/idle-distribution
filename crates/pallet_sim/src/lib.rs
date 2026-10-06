@@ -3,11 +3,13 @@ use wasm_bindgen::prelude::*;
 
 use crate::grid::{Placement, PlacementError, Rejection};
 use crate::mode1::{EndReason, Phase, Shift, ShiftError};
+use crate::mode2::{ConveyorError, ConveyorRound, ConveyorStatus};
 use crate::physics::{CaseId, Pallet, RemoveError};
 use crate::scoring::Grade;
 
 pub mod grid;
 pub mod mode1;
+pub mod mode2;
 pub mod physics;
 pub mod scoring;
 pub mod sku;
@@ -19,11 +21,12 @@ pub struct Engine {
     mode: Mode,
 }
 
-/// What the engine is running: free placement, or a Mode 1 shift with its floor and clock.
+/// Free placement, a timed floor-staging shift, or a conveyor-survival round.
 #[derive(Debug)]
 enum Mode {
     Sandbox(Pallet),
     Mode1(Shift),
+    Mode2(ConveyorRound),
 }
 
 impl Default for Mode {
@@ -37,6 +40,7 @@ impl Mode {
         match self {
             Mode::Sandbox(pallet) => pallet,
             Mode::Mode1(shift) => shift.pallet(),
+            Mode::Mode2(round) => round.pallet(),
         }
     }
 }
@@ -65,11 +69,12 @@ impl Engine {
         to_js(&match &self.mode {
             Mode::Sandbox(pallet) => pallet.validate(&placement),
             Mode::Mode1(shift) => shift.validate(&placement),
+            Mode::Mode2(round) => round.validate(&placement),
         })
     }
 
-    /// Places the case, or throws if the placement is invalid. In Mode 1 it places the picked
-    /// floor case, at the latest time the engine has seen.
+    /// Places a case, or throws if invalid. During a round this places the picked inventory
+    /// case at the latest timestamp seen by the corresponding tick call.
     pub fn commit_placement(
         &mut self,
         sku_id: &str,
@@ -88,6 +93,11 @@ impl Engine {
                 shift
                     .place(placement, f64::NEG_INFINITY)
                     .map_err(shift_error)?;
+            }
+            Mode::Mode2(round) => {
+                round
+                    .place(placement, f64::NEG_INFINITY)
+                    .map_err(conveyor_error)?;
             }
         }
         self.get_snapshot()
@@ -117,10 +127,25 @@ impl Engine {
         self.get_snapshot()
     }
 
+    /// Starts Dock Survival immediately, at the caller's monotonic timestamp.
+    pub fn start_mode2(&mut self, seed: u64, now_ms: f64) -> Result<JsValue, JsError> {
+        self.mode = Mode::Mode2(ConveyorRound::new(seed, now_ms));
+        self.get_snapshot()
+    }
+
+    /// Advances conveyor arrivals and returns telemetry; null outside Mode 2.
+    pub fn tick_mode2(&mut self, now_ms: f64) -> Result<JsValue, JsError> {
+        let Mode::Mode2(round) = &mut self.mode else {
+            return Ok(JsValue::NULL);
+        };
+        round.tick(now_ms);
+        to_js(&round.status())
+    }
+
     /// The shift's floor inventory, in id order, as `{ id, sku_id, yaw }`; empty outside Mode 1.
     pub fn floor_cases(&self) -> Result<JsValue, JsError> {
         let floor: Vec<FloorCaseDto> = match &self.mode {
-            Mode::Sandbox(_) => Vec::new(),
+            Mode::Sandbox(_) | Mode::Mode2(_) => Vec::new(),
             Mode::Mode1(shift) => shift
                 .floor()
                 .iter()
@@ -134,18 +159,19 @@ impl Engine {
         to_js(&floor)
     }
 
-    /// Lifts floor case `floor_id` at `now_ms` (`performance.now()`); the first pick starts the clock.
+    /// Picks an inventory case at `now_ms`: any floor case in Mode 1, only the FIFO head in Mode 2.
     pub fn pick_case(&mut self, floor_id: u32, now_ms: f64) -> Result<(), JsError> {
-        let Mode::Mode1(shift) = &mut self.mode else {
-            return Err(JsError::new("no shift is running"));
-        };
-        shift.pick(floor_id, now_ms).map_err(shift_error)
+        match &mut self.mode {
+            Mode::Mode1(shift) => shift.pick(floor_id, now_ms).map_err(shift_error),
+            Mode::Mode2(round) => round.pick(floor_id, now_ms).map_err(conveyor_error),
+            Mode::Sandbox(_) => Err(JsError::new("no shift is running")),
+        }
     }
 
     /// Advances the shift clock to `now_ms` and returns the shift status; null outside Mode 1.
     pub fn tick(&mut self, now_ms: f64) -> Result<JsValue, JsError> {
         match &mut self.mode {
-            Mode::Sandbox(_) => Ok(JsValue::NULL),
+            Mode::Sandbox(_) | Mode::Mode2(_) => Ok(JsValue::NULL),
             Mode::Mode1(shift) => {
                 shift.tick(now_ms);
                 to_js(&ShiftDto::of(shift))
@@ -155,11 +181,24 @@ impl Engine {
 
     /// Ships the pallet, ending the shift.
     pub fn ship(&mut self, now_ms: f64) -> Result<JsValue, JsError> {
-        let Mode::Mode1(shift) = &mut self.mode else {
-            return Err(JsError::new("no shift is running"));
-        };
-        shift.ship(now_ms);
+        match &mut self.mode {
+            Mode::Mode1(shift) => shift.ship(now_ms),
+            Mode::Mode2(round) => round.ship(now_ms).map_err(conveyor_error)?,
+            Mode::Sandbox(_) => return Err(JsError::new("no shift is running")),
+        }
         self.get_snapshot()
+    }
+}
+
+fn conveyor_error(error: ConveyorError) -> JsError {
+    match error {
+        ConveyorError::RoundOver => JsError::new("the conveyor round is over"),
+        ConveyorError::NotAtPickSpur => {
+            JsError::new("only the oldest case at the pick spur can be picked")
+        }
+        ConveyorError::NotHeld => JsError::new("drop the case that was picked"),
+        ConveyorError::HeightNotReached => JsError::new("reach the 60 inch target before shipping"),
+        ConveyorError::Rejected(rejection) => rejected(rejection),
     }
 }
 
@@ -222,8 +261,9 @@ struct EngineSnapshot {
     composite_score: u32,
     grade: Grade,
     placed_cases: Vec<PlacedCaseDto>,
-    /// The Mode 1 shift; null in the sandbox.
+    /// The Mode 1 shift; null outside Mode 1.
     mode1: Option<ShiftDto>,
+    mode2: Option<ConveyorStatus>,
 }
 
 #[derive(Serialize)]
@@ -310,8 +350,12 @@ impl EngineSnapshot {
                 })
                 .collect(),
             mode1: match mode {
-                Mode::Sandbox(_) => None,
+                Mode::Sandbox(_) | Mode::Mode2(_) => None,
                 Mode::Mode1(shift) => Some(ShiftDto::of(shift)),
+            },
+            mode2: match mode {
+                Mode::Mode2(round) => Some(round.status()),
+                _ => None,
             },
         }
     }

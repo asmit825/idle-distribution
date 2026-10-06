@@ -136,3 +136,30 @@ test('Mode 1 picks, places, rejects heavy-on-light, and ships through the engine
     assert.equal(engine.start_mode1(7n).cases_placed, 0);
   });
 });
+
+test('Mode 2 exposes FIFO arrivals and freezes the engine at the fifth diversion', () => {
+  withEngine(engine => {
+    const initial = engine.start_mode2(42n, 1000);
+    assert.equal(initial.mode1, null);
+    assert.equal(initial.mode2.seed, '42');
+    assert.equal(initial.mode2.arrival_interval_ms, 3500);
+    assert.equal(engine.tick_mode2(4500).queue.length, 1);
+    const head = engine.tick_mode2(8000).queue[0];
+    assert.throws(() => engine.pick_case(head.id + 1, 8000), /pick spur/);
+    engine.pick_case(head.id, 8000);
+    const placed = engine.commit_placement(head.sku_id, 0, 0, 0, false);
+    assert.equal(placed.cases_placed, 1);
+    assert.equal(placed.mode2.queue.length, 1);
+    assert.equal(placed.mode2.queue[0].id, 1);
+    assert.throws(() => engine.ship(8000), /60/);
+    const stopped = engine.tick_mode2(1_000_000);
+    assert.equal(stopped.end_reason, 'estop');
+    assert.equal(stopped.diversions_count, 5);
+    assert.equal(stopped.queue.length, 10);
+    assert.throws(() => engine.pick_case(1, 1_000_000), /round is over/);
+    assert.equal(engine.tick_mode2(2_000_000).elapsed_ms, stopped.elapsed_ms);
+    assert.equal(engine.get_snapshot().cases_placed, 1);
+    assert.equal(engine.start_mode1(42n).mode2, null);
+    assert.equal(engine.tick_mode2(2_000_000), null);
+  });
+});

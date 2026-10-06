@@ -1,7 +1,9 @@
+import { useState, type ReactNode } from 'react';
+import { Mode2App } from './components/Mode2App';
 import { Boxes, MousePointer2, RotateCcw, Truck } from 'lucide-react';
 import { PalletCanvas } from './components/PalletCanvas';
 import { useFloorLayout, useMode1GameLoop, type Mode1Game } from './hooks/useMode1GameLoop';
-import type { ShiftEnd, ShiftEngine } from './types/engine';
+import type { ConveyorEngine, ShiftEnd, ShiftEngine } from './types/engine';
 
 const ENDINGS: Record<ShiftEnd, string> = {
   time_up: 'Shift over',
@@ -9,7 +11,18 @@ const ENDINGS: Record<ShiftEnd, string> = {
   all_placed: 'Order complete',
 };
 
-export function App({ handshake, engine, seed }: { handshake: string; engine: ShiftEngine; seed?: bigint }) {
+export function App({ handshake, engine, seed }: { handshake: string; engine: ConveyorEngine; seed?: bigint }) {
+  const [mode, setMode] = useState<1 | 2>(() => new URLSearchParams(window.location.search).get('mode') === '2' ? 2 : 1);
+  const modeSwitch = <nav className="mode-switch" aria-label="Game mode">
+    <button type="button" aria-pressed={mode === 1} onClick={() => setMode(1)}>Mode 1 · Free staging</button>
+    <button type="button" aria-pressed={mode === 2} onClick={() => setMode(2)}>Mode 2 · Conveyor</button>
+  </nav>;
+  return mode === 1
+    ? <Mode1App handshake={handshake} engine={engine} seed={seed} modeSwitch={modeSwitch} />
+    : <Mode2App handshake={handshake} engine={engine} seed={seed} modeSwitch={modeSwitch} />;
+}
+
+function Mode1App({ handshake, engine, seed, modeSwitch }: { handshake: string; engine: ShiftEngine; seed?: bigint; modeSwitch: ReactNode }) {
   const layout = useFloorLayout();
   const game = useMode1GameLoop(engine, { seed, layout });
   const shift = game?.shift;
@@ -18,6 +31,7 @@ export function App({ handshake, engine, seed }: { handshake: string; engine: Sh
     <main className="workstation">
       <header className="header">
         <div className="brand"><Boxes size={28} /><div><span className="eyebrow">IDLE DISTRIBUTION</span><h1>Pallet builder</h1></div></div>
+        {modeSwitch}
         {shift && (
           <div className="shift-controls">
             <div className={`shift-clock ${shift.phase}`} role="timer" aria-label="Shift time remaining">{clock(shift.time_remaining_ms)}</div>

@@ -43,6 +43,7 @@ export interface EngineSnapshot {
   placed_cases: PlacedCase[];
   /** The Mode 1 shift; null in the sandbox. */
   mode1: ShiftStatus | null;
+  mode2: ConveyorStatus | null;
 }
 
 /** A Mode 1 floor case as the seed spawned it. Its floor position is the UI's layout. */
@@ -89,4 +90,27 @@ export interface ShiftEngine extends PalletEngine {
   /** Advances the clock; null outside Mode 1. */
   tick(nowMs: number): ShiftStatus | null;
   ship(nowMs: number): EngineSnapshot;
+}
+
+
+/** Authoritative FIFO arrivals and telemetry from the Mode 2 engine. */
+export interface ConveyorCase { id: number; sku_id: SkuId }
+export interface ConveyorStatus {
+  seed: string;
+  elapsed_ms: number;
+  arrival_interval_ms: number;
+  /** Normalized travel of the incoming case; preserved when the line accelerates. */
+  arrival_progress: number;
+  incoming: ConveyorCase;
+  queue: ConveyorCase[];
+  signal: 'green' | 'yellow' | 'red';
+  diversions_count: number;
+  diversions: { case: ConveyorCase; elapsed_ms: number }[];
+  end_reason: 'estop' | 'shipped' | null;
+  can_ship: boolean;
+}
+
+export interface ConveyorEngine extends ShiftEngine {
+  start_mode2(seed: bigint, nowMs: number): EngineSnapshot;
+  tick_mode2(nowMs: number): ConveyorStatus | null;
 }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   ACESFilmicToneMapping, Clock, Color, DirectionalLight, GridHelper, Group, HemisphereLight,
   Mesh, MeshStandardMaterial, PCFSoftShadowMap, PerspectiveCamera,
@@ -8,13 +8,14 @@ import { FlipVertical2, RotateCw } from 'lucide-react';
 import { PlacementController, type PlacementEvent } from '../controls/PlacementController';
 import { PointerManager } from '../controls/PointerManager';
 import { BoxMesh } from '../rendering/BoxMesh';
+import { ConveyorBelt, CONVEYOR_BOUNDS } from '../rendering/ConveyorBelt';
 import { CameraController, type CameraPreset, type Insets } from '../rendering/CameraController';
 import { disposeBoxMaterials } from '../rendering/materials';
 import { createPallet } from '../scene/pallet';
 import { orientedSize, placedCaseBox, toScene } from '../scene/coordinates';
 import type { StagingBay } from '../scene/staging';
 import { skuById } from '../types/catalog';
-import type { EngineSnapshot, PalletEngine, Rejection } from '../types/engine';
+import type { ConveyorStatus, EngineSnapshot, PalletEngine, Rejection } from '../types/engine';
 
 /** SPEC-01 §7.3: phone layouts, where HUD chrome overlays the canvas. */
 export const COMPACT_QUERY = '(max-width:900px),(max-height:540px),(pointer:coarse)';
@@ -49,19 +50,23 @@ export interface PalletCanvasProps {
   /** Ends floor interaction for good: any held case returns and nothing more can be picked. */
   locked?: boolean;
   onPlaced?: (snapshot: EngineSnapshot) => void;
+  conveyor?: () => ConveyorStatus | undefined;
 }
 
-export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPlaced }: PalletCanvasProps) {
+export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPlaced, conveyor }: PalletCanvasProps) {
   const host = useRef<HTMLDivElement>(null);
   const interaction = useRef<Interaction>();
   /** The latest props, for the long-lived controllers. */
-  const props = useRef({ bays, pick, canDrop, onPlaced });
-  props.current = { bays, pick, canDrop, onPlaced };
+  const props = useRef({ bays, pick, canDrop, onPlaced, conveyor });
+  props.current = { bays, pick, canDrop, onPlaced, conveyor };
+  const moveConveyorPick = useCallback((id: number, position: Vector3) => interaction.current?.placement.moveBay(id, position), []);
+  const heldConveyorCase = useCallback(() => interaction.current?.placement.held?.bay.id, []);
   const [error, setError] = useState(false);
   const [placedGroup, setPlacedGroup] = useState<Group>();
+  const [conveyorGroup, setConveyorGroup] = useState<Group>();
   const [snapshot, setSnapshot] = useState<EngineSnapshot>(() => engine.get_snapshot());
   const [holding, setHolding] = useState(false);
-  const [message, setMessage] = useState('Drag a carton from the floor onto the pallet.');
+  const [message, setMessage] = useState(conveyor ? 'Drag the oldest carton from the pick spur onto the pallet.' : 'Drag a carton from the floor onto the pallet.');
 
   useEffect(() => {
     const container = host.current!;
@@ -81,7 +86,9 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
     scene.add(createPallet());
     const placed = new Group();
     const interactive = new Group();
-    scene.add(placed, interactive);
+    const equipment = new Group();
+    scene.add(placed, interactive, equipment);
+    setConveyorGroup(equipment);
     setPlacedGroup(placed);
     scene.add(new HemisphereLight(0xcce4ff, 0x6b5037, 2.5));
     const sun = new DirectionalLight(0xffe5bc, 3.5);
@@ -91,7 +98,7 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
     Object.assign(sun.shadow.camera, { left: -50, right: 50, top: 50, bottom: -50, near: 1, far: 180 });
     sun.shadow.normalBias = 0.08;
     scene.add(sun);
-    const floor = new Mesh(new PlaneGeometry(1000, 1000), new MeshStandardMaterial({ color: 0x202d38, roughness: 1 }));
+    const floor = new Mesh(new PlaneGeometry(10000, 10000), new MeshStandardMaterial({ color: 0x202d38, roughness: 1 }));
     floor.rotation.x = -Math.PI / 2;
     floor.position.y = -2.4;
     floor.receiveShadow = true;
@@ -106,7 +113,7 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
     setSnapshot(initial);
     cameraController.setStackHeight(initial.max_height_inches);
     const floorBays = props.current.bays;
-    if (floorBays) cameraController.setFloor(floorBays);
+    if (floorBays) cameraController.setFloor(floorBays, props.current.conveyor ? [CONVEYOR_BOUNDS] : []);
     const placement = new PlacementController({
       engine,
       camera,
@@ -114,6 +121,7 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
       viewport: () => ({ width: container.clientWidth, height: container.clientHeight }),
       bays: floorBays,
       refill: !floorBays,
+      renderBays: !props.current.conveyor,
       pick: bay => props.current.pick?.(bay) ?? true,
       canDrop: () => props.current.canDrop?.() ?? true,
       onEvent: event => {
@@ -158,6 +166,17 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
         return { x: rect.left + (ndc.x + 1) / 2 * rect.width, y: rect.top + (1 - ndc.y) / 2 * rect.height };
       };
       window.__palletTest = {
+        conveyorCartons: () => {
+          const positions: Record<number, { x: number; y: number; z: number }> = {};
+          equipment.traverse(object => {
+            if (object.name.startsWith('conveyor-carton-')) {
+              const id = Number(object.name.slice('conveyor-carton-'.length));
+              const { x, y, z } = object.position;
+              positions[id] = { x, y, z };
+            }
+          });
+          return positions;
+        },
         deckPoint: (x, y, elevation = 0) => toClient(toScene(x, y, elevation)),
         bayCarton: (skuId, yaw) => {
           // The first matching carton whose top is not hidden behind a neighbor.
@@ -185,7 +204,7 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
       cameraController.dispose();
       // Placed cartons belong to their BoxMesh components; their cached SKU materials are released
       // here and regenerated on the next mount.
-      scene.remove(placed, interactive);
+      scene.remove(placed, interactive, equipment);
       disposeBoxMaterials();
       // Shared pallet materials/geometries are disposed exactly once.
       const geometries = new Set<import('three').BufferGeometry>();
@@ -209,7 +228,7 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
     if (!bays || !current || current.bays === bays) return;
     current.bays = bays;
     current.placement.setBays(bays);
-    current.camera.setFloor(bays);
+    if (!props.current.conveyor) current.camera.setFloor(bays);
   }, [bays]);
 
   useEffect(() => {
@@ -220,6 +239,7 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
     <>
       <div ref={host} className="canvas-host">
         {error && <p role="alert" className="startup">WebGL is unavailable. Enable hardware acceleration or try another browser.</p>}
+        {conveyorGroup && conveyor && <ConveyorBelt parent={conveyorGroup} readStatus={conveyor} movePick={moveConveyorPick} heldCase={heldConveyorCase} />}
         {placedGroup && snapshot.placed_cases.map(placed => {
           const box = placedCaseBox(placed);
           const base = box.getCenter(new Vector3()).setY(box.min.y);
@@ -293,6 +313,7 @@ declare global {
   interface Window {
     /** Development-only hooks for browser tests: client coordinates of scene features. */
     __palletTest?: {
+      conveyorCartons(): Record<number, { x: number; y: number; z: number }>;
       deckPoint(x: number, y: number, elevation?: number): { x: number; y: number };
       /** The top of a visible floor carton of this SKU, optionally lying at `yaw`. */
       bayCarton(skuId: string, yaw?: number): { x: number; y: number };

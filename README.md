@@ -86,12 +86,12 @@ The 8-SKU catalog (SPEC-01 §2.2) lives in `crates/pallet_sim/src/sku.rs` and is
 
 ### Stacking engine
 
-`Engine` (in `crates/pallet_sim/src/lib.rs`) is the authoritative pallet. It runs synchronously on the main thread. A new `Engine` is a free-placement sandbox until `start_mode1` (see *Mode 1*).
+`Engine` (in `crates/pallet_sim/src/lib.rs`) is the authoritative pallet. It runs synchronously on the main thread. A new `Engine` is a free-placement sandbox until `start_mode1` or `start_mode2`.
 
 - `validate_placement(sku_id, grid_x, grid_y, rot_z, flipped)` → `{ status: 'valid' | 'warning' | 'invalid', rejection, elevation_in, overhang_in, unsupported_fraction, would_crush }`. It does not change the pallet.
 - `commit_placement(...)` → snapshot, or throws `placement rejected: <reason>`.
 - `remove_placement(case_id)` → snapshot. It throws while another case rests on that one, and during a shift.
-- `get_snapshot()` → `{ cases_placed, total_weight_lbs, max_height_inches, volume_utilization_pct, max_overhang_inches, cog_inches, cog_drift_inches, crushed_count, quality_pct, composite_score, grade, placed_cases: [{ id, sku_id, grid_x, grid_y, elevation_z, rotation_yaw, flipped, crushed, weight_lbs, load_lbs }], mode1 }`, where `mode1` is the shift status or `null`.
+- `get_snapshot()` → `{ cases_placed, total_weight_lbs, max_height_inches, volume_utilization_pct, max_overhang_inches, cog_inches, cog_drift_inches, crushed_count, quality_pct, composite_score, grade, placed_cases: [{ id, sku_id, grid_x, grid_y, elevation_z, rotation_yaw, flipped, crushed, weight_lbs, load_lbs }], mode1, mode2 }`, with the active mode status populated and the other `null`.
 
 **Placement**
 - `grid_x`/`grid_y` give the case's min-corner cell; −1 allows a 2" overhang.
@@ -134,3 +134,18 @@ In the sandbox, each of the eight floor bays (`src/scene/staging.ts`) holds one 
 - **Camera** (`src/rendering/CameraController.ts`): OrbitControls with `Iso` (35.264° up, 45° around), `Top`, `Side` (from the +X end, between the staging rows), and `Reset`. Presets keep your zoom and pan; `Reset` discards them. The look-at point eases upward by half the stack height. `frameCompactCamera` uses `setViewOffset` to center the view in the clear band between HUD overlays, then binary-searches the closest distance that keeps the pallet, the stack, and every bay inside that band. Overlays marked `data-chrome` count as HUD on compact layouts (`COMPACT_QUERY`, SPEC-01 §7.3).
 - In development, `window.__palletTest` gives browser tests the screen positions of deck points and of visible floor cartons by SKU and yaw.
 
+
+
+### Mode 2 — Dock Survival
+
+Select **Mode 2 · Conveyor**, or open `?mode=2&seed=2149` for a reproducible run (this seed begins with four 15-inch Light Tall cartons). Switching modes starts a fresh round and clears the pallet.
+
+The conveyor starts immediately. Drag the oldest carton from the pick spur beside the signal tower onto the pallet using the existing rotate/flip controls. Ten cartons fit in the FIFO buffer. A held carton reserves its slot until successfully placed; invalid or cancelled drops keep it at the head. Incoming cartons divert when all ten slots are occupied. Signals are green at 0–5, yellow at 6–8, and red at 9–10; warning lights blink. Saturation and Estop play distinct short klaxons after a user gesture enables browser audio; the **Sound** button mutes or enables them. The fifth diversion ends the round immediately with **Warehouse Estop**.
+
+Arrival intervals follow `3500 - 1500 × height / 60` milliseconds, with in-flight progress preserved when a placement changes the height. The engine processes missed arrivals in order and freezes at the exact fifth-diversion deadline, even after a background-tab time jump. Case generation is deterministic for the same u64 seed. The shared support, overhang, crushing, and scoring rules apply; Mode 1's heavy-on-light prohibition does not.
+
+At 60 inches **Ship pallet** becomes available. The line continues until clicked, so shipping must beat the fifth diversion. Shipping freezes elapsed throughput time, the queue, rollers, and final score. **New conveyor run** starts an empty pallet and a fresh seed.
+
+`start_mode2(seed, now_ms)` returns a full snapshot; `tick_mode2(now_ms)` returns authoritative `mode2` telemetry. Shared `pick_case`, `commit_placement`, and `ship` dispatch to the active mode. `tick` remains Mode 1-only. `src/hooks/useMode2GameLoop.ts` drives Rust every frame and publishes HUD updates at 10 Hz; `src/rendering/ConveyorBelt.tsx` reads the live telemetry for roller, incoming-carton, and diversion animation. Framing includes the complete conveyor footprint on desktop and phone layouts.
+
+Ticket 06 tests cover Rust timing/overflow/FIFO/shipping, compiled Wasm integration, and browser mode switching, saturation/Estop, mid-drag arrivals, and shipping a 60-inch pallet.
