@@ -78,3 +78,61 @@ test('validate_placement averages under 0.2 ms on a full 100-case pallet, with a
     assert.ok(average < 0.2, `${average} ms`);
   });
 });
+
+test('Mode 1 stages a seeded 100-case floor and holds the shift clock until the first pick', () => {
+  withEngine(engine => {
+    assert.equal(engine.tick(1_000), null, 'the sandbox has no shift');
+    assert.deepEqual(engine.floor_cases(), []);
+    const staged = engine.start_mode1(42n);
+    assert.equal(staged.cases_placed, 0);
+    assert.deepEqual(staged.mode1, {
+      seed: '42', phase: 'staged', time_remaining_ms: 60_000, cases_on_floor: 100,
+      end_reason: null, early_finish_bonus: null, final_score: null,
+    });
+    const floor = engine.floor_cases();
+    assert.equal(floor.length, 100);
+    assert.deepEqual(Object.keys(floor[0]), ['id', 'sku_id', 'yaw']);
+    withEngine(other => {
+      other.start_mode1(42n);
+      assert.deepEqual(other.floor_cases(), floor);
+      // Every 64-bit seed is representable; the snapshot carries it as a decimal string.
+      assert.equal(other.start_mode1(2n ** 64n - 1n).mode1.seed, '18446744073709551615');
+    });
+    assert.equal(engine.tick(5_000).phase, 'staged');
+    assert.equal(engine.tick(5_000).time_remaining_ms, 60_000);
+  });
+});
+
+test('Mode 1 picks, places, rejects heavy-on-light, and ships through the engine', () => {
+  withEngine(engine => {
+    engine.start_mode1(42n);
+    const floor = engine.floor_cases();
+    const light = floor.find(c => c.sku_id === 'SKU-LT');
+    const heavy = floor.find(c => c.sku_id === 'SKU-HC');
+    engine.pick_case(light.id, 10_000);
+    assert.deepEqual(engine.tick(20_000), {
+      seed: '42', phase: 'running', time_remaining_ms: 50_000, cases_on_floor: 100,
+      end_reason: null, early_finish_bonus: null, final_score: null,
+    });
+    assert.equal(engine.commit_placement('SKU-LT', 0, 0, 0, false).mode1.cases_on_floor, 99);
+    assert.throws(() => engine.pick_case(light.id, 21_000), /not on the floor/);
+    assert.throws(() => engine.remove_placement(0), /shift/);
+
+    engine.pick_case(heavy.id, 21_000);
+    assert.deepEqual(engine.validate_placement('SKU-HC', 0, 0, 0, false), {
+      status: 'invalid', rejection: 'heavy_on_light', elevation_in: 15, overhang_in: 0, unsupported_fraction: 0.25, would_crush: 0,
+    });
+    assert.throws(() => engine.commit_placement('SKU-HC', 0, 0, 0, false), /placement rejected: heavy_on_light/);
+
+    const shipped = engine.ship(30_000);
+    assert.deepEqual(shipped.mode1, {
+      seed: '42', phase: 'complete', time_remaining_ms: 40_000, cases_on_floor: 99,
+      end_reason: 'shipped', early_finish_bonus: 0, final_score: 80,
+    });
+    assert.equal(shipped.composite_score, 80); // one case, 20% center-of-gravity drift
+    assert.throws(() => engine.pick_case(heavy.id, 31_000), /shift is over/);
+
+    // A new shift clears the pallet.
+    assert.equal(engine.start_mode1(7n).cases_placed, 0);
+  });
+});

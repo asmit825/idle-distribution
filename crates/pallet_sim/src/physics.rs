@@ -145,18 +145,25 @@ impl Pallet {
         Ok(())
     }
 
-    /// Cases topping out exactly at `elevation` under `footprint`, each weighted by its share of
-    /// the total contact area, so a partly overhanging case still sends its whole weight down.
+    /// The cases a base at `elevation` over `footprint` would rest on directly. None on the deck.
+    pub fn beneath<'a>(
+        &'a self,
+        footprint: &'a Rect,
+        elevation: i32,
+    ) -> impl Iterator<Item = &'a PlacedCase> + 'a {
+        self.cases.iter().filter(move |case| {
+            elevation > 0
+                && case.top_in() == elevation
+                && case.footprint.overlap_area(footprint) > 0
+        })
+    }
+
+    /// The cases beneath, each weighted by its share of the total contact area, so a partly
+    /// overhanging case still sends its whole weight down.
     fn supports(&self, footprint: &Rect, elevation: i32) -> Vec<Support> {
-        if elevation == 0 {
-            return Vec::new();
-        }
         let contacts: Vec<(CaseId, i64)> = self
-            .cases
-            .iter()
-            .filter(|case| case.top_in() == elevation)
+            .beneath(footprint, elevation)
             .map(|case| (case.id, case.footprint.overlap_area(footprint)))
-            .filter(|&(_, area)| area > 0)
             .collect();
         let total: i64 = contacts.iter().map(|&(_, area)| area).sum();
         contacts

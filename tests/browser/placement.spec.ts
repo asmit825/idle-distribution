@@ -1,7 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
 
 /** Client coordinates from the development-only scene hooks. */
-const bayCarton = (page: Page, skuId: string) => page.evaluate(id => window.__palletTest!.bayCarton(id), skuId);
+const bayCarton = (page: Page, skuId: string, yaw?: number) =>
+  page.evaluate(([id, yaw]) => window.__palletTest!.bayCarton(id as string, yaw as number | undefined), [skuId, yaw]);
 const projectDeckPoint = (page: Page, x: number, y: number, elevation: number) =>
   page.evaluate(([x, y, elevation]) => window.__palletTest!.deckPoint(x, y, elevation), [x, y, elevation]);
 
@@ -17,8 +18,8 @@ async function deckPoint(page: Page, x: number, y: number, elevation = 0) {
 }
 
 /** Presses on a floor carton and drags it to `to`, running `during` before release. */
-async function drag(page: Page, skuId: string, to: { x: number; y: number }, during?: () => Promise<void>) {
-  const from = await bayCarton(page, skuId);
+async function drag(page: Page, skuId: string, to: { x: number; y: number }, during?: () => Promise<void>, yaw?: number) {
+  const from = await bayCarton(page, skuId, yaw);
   await page.mouse.move(from.x, from.y);
   await page.mouse.down();
   await page.mouse.move(to.x, to.y, { steps: 12 });
@@ -31,18 +32,18 @@ test('drags floor cartons onto the pallet with a mouse, rotating, stacking, and 
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto('/');
+  await page.goto('/?seed=42');
   await expect.poll(() => page.evaluate(() => !!window.__palletTest)).toBe(true);
   const status = page.locator('.placement-status');
   const rotate = page.getByRole('button', { name: /Rotate/ });
   await expect(rotate).toBeDisabled();
 
-  // Heavy Flat waits on the floor turned 90° (16" × 24"); R turns it to 24" × 16" mid-drag.
+  // A Heavy Flat waiting on the floor turned 90° (16" × 24"); R turns it to 24" × 16" mid-drag.
   await drag(page, 'SKU-HF', await deckPoint(page, 24, 20), async () => {
     await expect(status).toHaveText('Holding Heavy Flat.');
     await expect(rotate).toBeEnabled();
     await page.keyboard.press('r');
-  });
+  }, 90);
   await expect(status).toHaveText('Placed Heavy Flat, 24″ × 16″, at 0″. 1 case on the pallet.');
   await expect(rotate).toBeDisabled();
 

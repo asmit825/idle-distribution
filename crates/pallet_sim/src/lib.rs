@@ -1,11 +1,13 @@
 use serde::Serialize;
 use wasm_bindgen::prelude::*;
 
-use crate::grid::{Placement, PlacementError};
+use crate::grid::{Placement, PlacementError, Rejection};
+use crate::mode1::{EndReason, Phase, Shift, ShiftError};
 use crate::physics::{CaseId, Pallet, RemoveError};
 use crate::scoring::Grade;
 
 pub mod grid;
+pub mod mode1;
 pub mod physics;
 pub mod scoring;
 pub mod sku;
@@ -14,7 +16,29 @@ pub mod sku;
 #[wasm_bindgen]
 #[derive(Default)]
 pub struct Engine {
-    pallet: Pallet,
+    mode: Mode,
+}
+
+/// What the engine is running: free placement, or a Mode 1 shift with its floor and clock.
+#[derive(Debug)]
+enum Mode {
+    Sandbox(Pallet),
+    Mode1(Shift),
+}
+
+impl Default for Mode {
+    fn default() -> Mode {
+        Mode::Sandbox(Pallet::default())
+    }
+}
+
+impl Mode {
+    fn pallet(&self) -> &Pallet {
+        match self {
+            Mode::Sandbox(pallet) => pallet,
+            Mode::Mode1(shift) => shift.pallet(),
+        }
+    }
 }
 
 #[wasm_bindgen]
@@ -38,10 +62,14 @@ impl Engine {
         flipped: bool,
     ) -> Result<JsValue, JsError> {
         let placement = parse_placement(sku_id, grid_x, grid_y, rot_z, flipped)?;
-        to_js(&self.pallet.validate(&placement))
+        to_js(&match &self.mode {
+            Mode::Sandbox(pallet) => pallet.validate(&placement),
+            Mode::Mode1(shift) => shift.validate(&placement),
+        })
     }
 
-    /// Places the case, or throws if the placement is invalid.
+    /// Places the case, or throws if the placement is invalid. In Mode 1 it places the picked
+    /// floor case, at the latest time the engine has seen.
     pub fn commit_placement(
         &mut self,
         sku_id: &str,
@@ -51,15 +79,26 @@ impl Engine {
         flipped: bool,
     ) -> Result<JsValue, JsError> {
         let placement = parse_placement(sku_id, grid_x, grid_y, rot_z, flipped)?;
-        self.pallet.commit(placement).map_err(|rejection| {
-            JsError::new(&format!("placement rejected: {}", rejection.as_str()))
-        })?;
+        match &mut self.mode {
+            Mode::Sandbox(pallet) => {
+                pallet.commit(placement).map_err(rejected)?;
+            }
+            Mode::Mode1(shift) => {
+                // Timestamps only move the clock forward, so this lands at the latest one.
+                shift
+                    .place(placement, f64::NEG_INFINITY)
+                    .map_err(shift_error)?;
+            }
+        }
         self.get_snapshot()
     }
 
-    /// Removes a case with nothing resting on it.
+    /// Removes a case with nothing resting on it. Not during a shift.
     pub fn remove_placement(&mut self, case_id: CaseId) -> Result<JsValue, JsError> {
-        self.pallet.remove(case_id).map_err(|error| match error {
+        let Mode::Sandbox(pallet) = &mut self.mode else {
+            return Err(JsError::new("cases cannot leave the pallet during a shift"));
+        };
+        pallet.remove(case_id).map_err(|error| match error {
             RemoveError::NotFound => JsError::new(&format!("no case {case_id}")),
             RemoveError::Supporting => {
                 JsError::new(&format!("case {case_id} is supporting another case"))
@@ -69,7 +108,71 @@ impl Engine {
     }
 
     pub fn get_snapshot(&self) -> Result<JsValue, JsError> {
-        to_js(&EngineSnapshot::of(&self.pallet))
+        to_js(&EngineSnapshot::of(&self.mode))
+    }
+
+    /// Starts a Mode 1 shift on an empty pallet, its floor spawned from `seed` (SPEC-01 §5.1).
+    pub fn start_mode1(&mut self, seed: u64) -> Result<JsValue, JsError> {
+        self.mode = Mode::Mode1(Shift::new(seed));
+        self.get_snapshot()
+    }
+
+    /// The shift's floor inventory, in id order, as `{ id, sku_id, yaw }`; empty outside Mode 1.
+    pub fn floor_cases(&self) -> Result<JsValue, JsError> {
+        let floor: Vec<FloorCaseDto> = match &self.mode {
+            Mode::Sandbox(_) => Vec::new(),
+            Mode::Mode1(shift) => shift
+                .floor()
+                .iter()
+                .map(|case| FloorCaseDto {
+                    id: case.id,
+                    sku_id: case.sku.id,
+                    yaw: case.yaw_deg,
+                })
+                .collect(),
+        };
+        to_js(&floor)
+    }
+
+    /// Lifts floor case `floor_id` at `now_ms` (`performance.now()`); the first pick starts the clock.
+    pub fn pick_case(&mut self, floor_id: u32, now_ms: f64) -> Result<(), JsError> {
+        let Mode::Mode1(shift) = &mut self.mode else {
+            return Err(JsError::new("no shift is running"));
+        };
+        shift.pick(floor_id, now_ms).map_err(shift_error)
+    }
+
+    /// Advances the shift clock to `now_ms` and returns the shift status; null outside Mode 1.
+    pub fn tick(&mut self, now_ms: f64) -> Result<JsValue, JsError> {
+        match &mut self.mode {
+            Mode::Sandbox(_) => Ok(JsValue::NULL),
+            Mode::Mode1(shift) => {
+                shift.tick(now_ms);
+                to_js(&ShiftDto::of(shift))
+            }
+        }
+    }
+
+    /// Ships the pallet, ending the shift.
+    pub fn ship(&mut self, now_ms: f64) -> Result<JsValue, JsError> {
+        let Mode::Mode1(shift) = &mut self.mode else {
+            return Err(JsError::new("no shift is running"));
+        };
+        shift.ship(now_ms);
+        self.get_snapshot()
+    }
+}
+
+fn rejected(rejection: Rejection) -> JsError {
+    JsError::new(&format!("placement rejected: {}", rejection.as_str()))
+}
+
+fn shift_error(error: ShiftError) -> JsError {
+    match error {
+        ShiftError::ShiftOver => JsError::new("the shift is over"),
+        ShiftError::NotOnFloor => JsError::new("that case is not on the floor"),
+        ShiftError::NotHeld => JsError::new("drop the case that was picked"),
+        ShiftError::Rejected(rejection) => rejected(rejection),
     }
 }
 
@@ -119,6 +222,44 @@ struct EngineSnapshot {
     composite_score: u32,
     grade: Grade,
     placed_cases: Vec<PlacedCaseDto>,
+    /// The Mode 1 shift; null in the sandbox.
+    mode1: Option<ShiftDto>,
+}
+
+#[derive(Serialize)]
+struct FloorCaseDto {
+    id: u32,
+    sku_id: &'static str,
+    yaw: u16,
+}
+
+#[derive(Serialize)]
+struct ShiftDto {
+    /// Decimal, since a u64 outgrows a JS number.
+    seed: String,
+    phase: Phase,
+    time_remaining_ms: u32,
+    cases_on_floor: u32,
+    end_reason: Option<EndReason>,
+    /// Set once the shift is complete.
+    early_finish_bonus: Option<u32>,
+    /// Composite score plus the early finish bonus, once complete.
+    final_score: Option<u32>,
+}
+
+impl ShiftDto {
+    fn of(shift: &Shift) -> ShiftDto {
+        let result = shift.result();
+        ShiftDto {
+            seed: shift.seed().to_string(),
+            phase: shift.phase(),
+            time_remaining_ms: shift.time_remaining_ms(),
+            cases_on_floor: shift.cases_on_floor(),
+            end_reason: shift.end_reason(),
+            early_finish_bonus: result.map(|result| result.early_finish_bonus),
+            final_score: result.map(|result| result.final_score),
+        }
+    }
 }
 
 /// Field names follow the stored `PlacedCaseSnapshot` (SPEC-01 §4.2).
@@ -137,7 +278,8 @@ struct PlacedCaseDto {
 }
 
 impl EngineSnapshot {
-    fn of(pallet: &Pallet) -> EngineSnapshot {
+    fn of(mode: &Mode) -> EngineSnapshot {
+        let pallet = mode.pallet();
         let score = scoring::evaluate(pallet);
         let cases = pallet.cases();
         EngineSnapshot {
@@ -167,6 +309,10 @@ impl EngineSnapshot {
                     load_lbs: case.load_lbs,
                 })
                 .collect(),
+            mode1: match mode {
+                Mode::Sandbox(_) => None,
+                Mode::Mode1(shift) => Some(ShiftDto::of(shift)),
+            },
         }
     }
 }

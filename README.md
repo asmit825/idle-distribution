@@ -59,7 +59,7 @@ npm run build
 npm run preview
 ```
 
-The browser fetches the Wasm bytes, calls `initSync` on the main thread, constructs `Engine`, and logs `Engine initialized: v1.0.0` before mounting the viewport. Initialization errors appear on screen. Drag a floor carton onto the pallet to place it (see *Placing cases* below). Drag empty space to orbit, scroll or pinch to zoom, and right-drag or two-finger drag to pan.
+The browser fetches the Wasm bytes, calls `initSync` on the main thread, constructs `Engine`, and logs `Engine initialized: v1.0.0` before mounting the viewport. Initialization errors appear on screen. The app opens on a Mode 1 shift (see *Mode 1* below); add `?seed=<u64>` to the URL to replay a specific floor. Drag a floor carton onto the pallet to place it (see *Placing cases* below). Drag empty space to orbit, scroll or pinch to zoom, and right-drag or two-finger drag to pan.
 
 ### Verification
 
@@ -68,7 +68,7 @@ npx playwright install chromium
 npm test
 ```
 
-The suite runs the Rust unit tests (catalog, stacking physics, and scoring), exercises the actual compiled Wasm API (including a `validate_placement` latency benchmark), runs the Vitest unit tests under `src/` (pallet geometry including raycasts through both fork openings, Rust ↔ TypeScript SKU catalog parity, procedural carton textures, carton meshes, the pointer pipeline, placement against the real Wasm engine with a per-move latency check, and camera framing), and checks browser startup, orbit, desktop/phone resize, and mouse drag-and-drop. Browser tests start their own dev server on port 4173. Individual commands are `npm run test:rust`, `npm run test:wasm`, `npm run test:unit`, and `npm run test:browser`; build Wasm before running `test:wasm` or `test:unit` alone. Texture tests paint on a real Skia canvas via the `@napi-rs/canvas` dev dependency.
+The suite runs the Rust unit tests (catalog, stacking physics, scoring, and the Mode 1 shift), exercises the actual compiled Wasm API (including a `validate_placement` latency benchmark), runs the Vitest unit tests under `src/` (pallet geometry including raycasts through both fork openings, Rust ↔ TypeScript SKU catalog parity, procedural carton textures, carton meshes, the pointer pipeline, placement against the real Wasm engine with a per-move latency check, Mode 1 floor layouts, and camera framing), and checks browser startup, orbit, desktop/phone resize, mouse drag-and-drop, and a full Mode 1 shift on Playwright's fake clock. Browser tests start their own dev server on port 4173. Individual commands are `npm run test:rust`, `npm run test:wasm`, `npm run test:unit`, and `npm run test:browser`; build Wasm before running `test:wasm` or `test:unit` alone. Texture tests paint on a real Skia canvas via the `@napi-rs/canvas` dev dependency.
 
 ### Geometry conventions
 
@@ -86,12 +86,12 @@ The 8-SKU catalog (SPEC-01 §2.2) lives in `crates/pallet_sim/src/sku.rs` and is
 
 ### Stacking engine
 
-`Engine` (in `crates/pallet_sim/src/lib.rs`) is the authoritative pallet. It runs synchronously on the main thread:
+`Engine` (in `crates/pallet_sim/src/lib.rs`) is the authoritative pallet. It runs synchronously on the main thread. A new `Engine` is a free-placement sandbox until `start_mode1` (see *Mode 1*).
 
 - `validate_placement(sku_id, grid_x, grid_y, rot_z, flipped)` → `{ status: 'valid' | 'warning' | 'invalid', rejection, elevation_in, overhang_in, unsupported_fraction, would_crush }`. It does not change the pallet.
 - `commit_placement(...)` → snapshot, or throws `placement rejected: <reason>`.
-- `remove_placement(case_id)` → snapshot. It throws while another case rests on that one.
-- `get_snapshot()` → `{ cases_placed, total_weight_lbs, max_height_inches, volume_utilization_pct, max_overhang_inches, cog_inches, cog_drift_inches, crushed_count, quality_pct, composite_score, grade, placed_cases: [{ id, sku_id, grid_x, grid_y, elevation_z, rotation_yaw, flipped, crushed, weight_lbs, load_lbs }] }`.
+- `remove_placement(case_id)` → snapshot. It throws while another case rests on that one, and during a shift.
+- `get_snapshot()` → `{ cases_placed, total_weight_lbs, max_height_inches, volume_utilization_pct, max_overhang_inches, cog_inches, cog_drift_inches, crushed_count, quality_pct, composite_score, grade, placed_cases: [{ id, sku_id, grid_x, grid_y, elevation_z, rotation_yaw, flipped, crushed, weight_lbs, load_lbs }], mode1 }`, where `mode1` is the shift status or `null`.
 
 **Placement**
 - `grid_x`/`grid_y` give the case's min-corner cell; −1 allows a 2" overhang.
@@ -111,12 +111,26 @@ The 8-SKU catalog (SPEC-01 §2.2) lives in `crates/pallet_sim/src/sku.rs` and is
 - Interlock adds 2% for each elevation where some case bridges two or more supports, up to 10%.
 - Composite score = cases × quality. Grades: S ≥ 90, A ≥ 80, B ≥ 70, C ≥ 60, F below 60.
 
+### Mode 1: 100-case free staging
+
+A 60-second shift (SPEC-01 §5.1). The rules and the clock live in `crates/pallet_sim/src/mode1.rs`; `src/hooks/useMode1GameLoop.ts` keeps React in step with them.
+
+- `start_mode1(seed: bigint)` → snapshot. Clears the pallet and spawns 100 floor cases from the 64-bit seed with ChaCha8: each SKU uniformly at random, lying lengthwise along X or Z. The same seed gives the same floor on every device.
+- `floor_cases()` → `[{ id, sku_id, yaw }]`. Where they sit is the UI's layout.
+- `pick_case(floor_id, now_ms)` lifts a floor case. The first pick starts the clock; inspecting the floor beforehand is free. `commit_placement` then drops the picked case at the latest time the engine has seen; the UI ticks the clock right before each drop (`canDrop`), so a drop after 0:00 returns the case instead.
+- `tick(now_ms)` → `{ seed, phase: 'staged' | 'running' | 'complete', time_remaining_ms, cases_on_floor, end_reason, early_finish_bonus, final_score }`. Times are `performance.now()` milliseconds; earlier timestamps never wind the clock back. The remaining time rounds up, so 0:00 means truly out of time.
+- `ship(now_ms)` → snapshot. Ends the shift; an empty pallet can ship before the clock starts.
+- **No heavy on light**: a Heavy Cube or Heavy Flat resting directly on a Light Tall, Light Bulky, or Fragile Small is rejected as `heavy_on_light` (red ghost). Physical rejections take priority.
+- The shift ends at 0:00 (`time_up`, cancelling any held case), on Ship (`shipped`), or when the floor is empty (`all_placed`). Placing every case earns an early finish bonus of remaining seconds × 100 × quality, quality as a fraction, so a second saved is worth a case placed at that quality. Final score = composite score + bonus. 100 random cases average about 2,400 in³ against a 115,200 in³ build envelope, so a seeded floor can't actually fit on one pallet; the bonus path is tested with a two-case floor.
+- **Floor layout** (`src/game/FloorStaging.ts`): on desktop, eight clusters packed in rows; the four sides hug the pallet first, then the corners slide out along their diagonals until clear. On phones, one case per 26" bay slot, with the pallet in the center 2 × 2 block, filling an ellipse stretched up the screen in portrait and across it in landscape (the isometric camera looks along the X = Z diagonal). An orientation change re-stages the floor and reframes the camera.
+- The header shows the clock and **Ship pallet**; a result panel (ending, grade, cases, quality, scores, **New shift**) appears when the shift completes. The full result modal is ticket 07.
+
 ### Placing cases
 
-Each of the eight floor bays (`src/scene/staging.ts`) holds one carton and refills after a placement. Mode 1's 100-case floor replaces the bays in ticket 05.
+In the sandbox, each of the eight floor bays (`src/scene/staging.ts`) holds one carton and refills after a placement. In Mode 1, a bay stays empty once its case is on the pallet, and the floor locks when the shift ends.
 
 - **Pointer pipeline** (`src/controls/PointerManager.ts`): one Pointer Events path for mouse, pen, and touch. A press on a floor carton is claimed from the camera. Moving it 6px starts a drag; a shorter press is a tap that selects or deselects. Presses anywhere else go to the camera, and short ones tap: on a placed case they select it, and on empty space they clear the selection. Touch drags aim 64px above the finger. While dragging, `R`, the mouse wheel (once per scroll burst), a right-click, or a second finger rotates 90° clockwise, and `F` flips. `pointercancel` returns the case.
 - **Placement** (`src/controls/PlacementController.ts`): the pointer ray hits the deck plane or a placed case. On a case's top, the held case stacks there; on a side, it goes beside that face. The held case centers on that point and its corner snaps to the 2" grid. The engine's `validate_placement` then colors the ghost green, yellow, or red (`src/rendering/GhostBox.ts`, with a soft contact shadow). The held carton floats 2" above its ghost. Dropping in green or yellow commits; dropping in red returns the carton to its bay. A move averages well under 0.5 ms on a 100-case pallet.
 - **Camera** (`src/rendering/CameraController.ts`): OrbitControls with `Iso` (35.264° up, 45° around), `Top`, `Side` (from the +X end, between the staging rows), and `Reset`. Presets keep your zoom and pan; `Reset` discards them. The look-at point eases upward by half the stack height. `frameCompactCamera` uses `setViewOffset` to center the view in the clear band between HUD overlays, then binary-searches the closest distance that keeps the pallet, the stack, and every bay inside that band. Overlays marked `data-chrome` count as HUD on compact layouts (`COMPACT_QUERY`, SPEC-01 §7.3).
-- In development, `window.__palletTest` gives browser tests the screen positions of deck points and floor cartons.
+- In development, `window.__palletTest` gives browser tests the screen positions of deck points and of visible floor cartons by SKU and yaw.
 

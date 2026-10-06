@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import { Engine, initSync } from '../pkg/pallet_sim';
 import wasmUrl from '../pkg/pallet_sim_bg.wasm?url';
 import { App } from './App';
+import { seedFromUrl } from './hooks/useMode1GameLoop';
 import './styles.css';
 
 const root = createRoot(document.getElementById('root')!);
@@ -22,7 +23,7 @@ async function boot() {
     engine = new Engine();
     const handshake = `Engine initialized: ${engine.ping()}`;
     console.info(handshake);
-    root.render(<StrictMode><App handshake={handshake} engine={engine} /></StrictMode>);
+    root.render(<StrictMode><App handshake={handshake} engine={engine} seed={seedFromUrl()} /></StrictMode>);
   } catch (error) {
     if (disposed) return;
     console.error(error);

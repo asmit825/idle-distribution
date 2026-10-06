@@ -1,7 +1,7 @@
 import { Box3, MathUtils, Vector3, type PerspectiveCamera } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { DECK_Y, FLOOR_Y, PALLET_LENGTH_IN, PALLET_WIDTH_IN } from '../scene/coordinates';
-import { STAGING_BAYS } from '../scene/staging';
+import { STAGING_BAYS, type StagingBay } from '../scene/staging';
 
 /** HUD chrome covering the canvas, in CSS pixels. */
 export interface Insets {
@@ -85,8 +85,6 @@ const PRESETS = {
 const MARGIN_PX = 12;
 /** Height tracking eases with this time constant, in seconds. */
 const TRACKING_SECONDS = 0.3;
-/** The empty pallet and the staging bays. */
-const STAGED_POINTS = [palletVolume(0), ...STAGING_BAYS.map(bay => bay.bounds)].flatMap(corners);
 
 /**
  * Orbit inspection, quick presets, and height auto-tracking: the framed volume grows with the
@@ -103,6 +101,8 @@ export class CameraController {
   /** The last framing: where the camera looks and how far back it sits before the user zooms or pans. */
   private readonly fitTarget = new Vector3();
   private fitDistance = 0;
+  /** Corners of the empty pallet and the floor cartons. */
+  private stagedPoints = stagedPoints(STAGING_BAYS);
 
   constructor(camera: PerspectiveCamera, domElement: HTMLElement) {
     this.camera = camera;
@@ -115,6 +115,12 @@ export class CameraController {
     this.viewport = { width: Math.max(1, width), height: Math.max(1, height) };
     this.insets = insets;
     this.reframe(this.fitDistance ? undefined : direction(PRESETS.iso));
+  }
+
+  /** Frames a new floor layout, keeping the view angle, zoom, and pan. */
+  setFloor(bays: readonly StagingBay[]) {
+    this.stagedPoints = stagedPoints(bays);
+    if (this.fitDistance) this.reframe();
   }
 
   /** The current stack height above the deck, in inches. The camera eases toward it. */
@@ -158,7 +164,7 @@ export class CameraController {
 
     const points = this.framedPoints();
     // The look-at point starts at the center of the floor scene and climbs half as fast as the stack.
-    const target = new Box3().setFromPoints(STAGED_POINTS).getCenter(new Vector3());
+    const target = new Box3().setFromPoints(this.stagedPoints).getCenter(new Vector3());
     target.y += this.trackedHeight / 2;
     this.fitDistance = frameCompactCamera(camera, {
       points, target, direction: view, viewport: this.viewport, insets: this.insets, margin: MARGIN_PX,
@@ -173,8 +179,12 @@ export class CameraController {
 
   /** Corners of the pallet with the stack on it, and of every staging bay. */
   private framedPoints() {
-    return [...STAGED_POINTS, ...corners(palletVolume(this.trackedHeight))];
+    return [...this.stagedPoints, ...corners(palletVolume(this.trackedHeight))];
   }
+}
+
+function stagedPoints(bays: readonly StagingBay[]) {
+  return [palletVolume(0), ...bays.map(bay => bay.bounds)].flatMap(corners);
 }
 
 /** The pallet and a stack of `stackHeight` inches on it. */

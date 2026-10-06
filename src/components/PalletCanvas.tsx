@@ -12,7 +12,7 @@ import { CameraController, type CameraPreset, type Insets } from '../rendering/C
 import { disposeBoxMaterials } from '../rendering/materials';
 import { createPallet } from '../scene/pallet';
 import { orientedSize, placedCaseBox, toScene } from '../scene/coordinates';
-import { STAGING_BAYS } from '../scene/staging';
+import type { StagingBay } from '../scene/staging';
 import { skuById } from '../types/catalog';
 import type { EngineSnapshot, PalletEngine, Rejection } from '../types/engine';
 
@@ -27,17 +27,36 @@ const REJECTIONS: Record<Rejection, string> = {
   above_ceiling: 'it would rise above the 60″ ceiling',
   excess_overhang: 'it would overhang more than 2″',
   unsupported: 'over 30% of its base would be unsupported',
+  heavy_on_light: 'heavy cases cannot rest on light or fragile ones',
 };
 
 /** The live controllers, for the overlay buttons. */
 interface Interaction {
   placement: PlacementController;
   camera: CameraController;
+  /** The floor layout the controllers have. */
+  bays?: readonly StagingBay[];
 }
 
-export function PalletCanvas({ engine }: { engine: PalletEngine }) {
+export interface PalletCanvasProps {
+  engine: PalletEngine;
+  /** A floor whose bays stay empty once placed (Mode 1); the sandbox's refilling bays otherwise. */
+  bays?: readonly StagingBay[];
+  /** Asked as a case leaves the floor; false refuses the pick. */
+  pick?: (bay: StagingBay) => boolean;
+  /** Asked before a held case lands in a valid spot; false returns it to the floor. */
+  canDrop?: () => boolean;
+  /** Ends floor interaction for good: any held case returns and nothing more can be picked. */
+  locked?: boolean;
+  onPlaced?: (snapshot: EngineSnapshot) => void;
+}
+
+export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPlaced }: PalletCanvasProps) {
   const host = useRef<HTMLDivElement>(null);
   const interaction = useRef<Interaction>();
+  /** The latest props, for the long-lived controllers. */
+  const props = useRef({ bays, pick, canDrop, onPlaced });
+  props.current = { bays, pick, canDrop, onPlaced };
   const [error, setError] = useState(false);
   const [placedGroup, setPlacedGroup] = useState<Group>();
   const [snapshot, setSnapshot] = useState<EngineSnapshot>(() => engine.get_snapshot());
@@ -86,11 +105,17 @@ export function PalletCanvas({ engine }: { engine: PalletEngine }) {
     const initial = engine.get_snapshot();
     setSnapshot(initial);
     cameraController.setStackHeight(initial.max_height_inches);
+    const floorBays = props.current.bays;
+    if (floorBays) cameraController.setFloor(floorBays);
     const placement = new PlacementController({
       engine,
       camera,
       parent: interactive,
       viewport: () => ({ width: container.clientWidth, height: container.clientHeight }),
+      bays: floorBays,
+      refill: !floorBays,
+      pick: bay => props.current.pick?.(bay) ?? true,
+      canDrop: () => props.current.canDrop?.() ?? true,
       onEvent: event => {
         setMessage(placementMessage(event, engine));
         if (event.type === 'pick') setHolding(true);
@@ -98,11 +123,12 @@ export function PalletCanvas({ engine }: { engine: PalletEngine }) {
         if (event.type === 'placed') {
           setSnapshot(event.snapshot);
           cameraController.setStackHeight(event.snapshot.max_height_inches);
+          props.current.onPlaced?.(event.snapshot);
         }
       },
     });
     const pointers = new PointerManager(container, placement);
-    interaction.current = { placement, camera: cameraController };
+    interaction.current = { placement, camera: cameraController, bays: floorBays };
 
     const compact = window.matchMedia(COMPACT_QUERY);
     const resize = () => {
@@ -133,9 +159,16 @@ export function PalletCanvas({ engine }: { engine: PalletEngine }) {
       };
       window.__palletTest = {
         deckPoint: (x, y, elevation = 0) => toClient(toScene(x, y, elevation)),
-        bayCarton: skuId => {
-          const { bounds } = STAGING_BAYS.find(bay => bay.sku.id === skuId)!;
-          return toClient(bounds.getCenter(new Vector3()).setY(bounds.max.y));
+        bayCarton: (skuId, yaw) => {
+          // The first matching carton whose top is not hidden behind a neighbor.
+          const rect = container.getBoundingClientRect();
+          for (const bay of placement.bays) {
+            if (bay.sku.id !== skuId || (yaw !== undefined && bay.yaw !== yaw)) continue;
+            const point = toClient(bay.bounds.getCenter(new Vector3()).setY(bay.bounds.max.y));
+            const hit = placement.hitTest({ x: point.x - rect.left, y: point.y - rect.top });
+            if (hit?.target.kind === 'bay' && hit.target.bay === bay) return point;
+          }
+          throw new Error(`no ${skuId} in reach on the floor`);
         },
       };
     }
@@ -170,6 +203,18 @@ export function PalletCanvas({ engine }: { engine: PalletEngine }) {
       renderer.domElement.remove();
     };
   }, [engine]);
+
+  useEffect(() => {
+    const current = interaction.current;
+    if (!bays || !current || current.bays === bays) return;
+    current.bays = bays;
+    current.placement.setBays(bays);
+    current.camera.setFloor(bays);
+  }, [bays]);
+
+  useEffect(() => {
+    if (locked) interaction.current?.placement.lock();
+  }, [locked]);
 
   return (
     <>
@@ -249,7 +294,8 @@ declare global {
     /** Development-only hooks for browser tests: client coordinates of scene features. */
     __palletTest?: {
       deckPoint(x: number, y: number, elevation?: number): { x: number; y: number };
-      bayCarton(skuId: string): { x: number; y: number };
+      /** The top of a visible floor carton of this SKU, optionally lying at `yaw`. */
+      bayCarton(skuId: string, yaw?: number): { x: number; y: number };
     };
   }
 }

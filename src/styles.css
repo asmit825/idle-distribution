@@ -33,13 +33,33 @@ footer span:first-child { display: flex; gap: 8px; align-items: center; }
 .case-actions { position: absolute; left: 24px; bottom: 22px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: calc(100% - 300px); }
 kbd { font: 10px ui-monospace, monospace; color: #8fa2b3; border: 1px solid #ffffff26; border-radius: 3px; padding: 0 4px; }
 .placement-status { margin: 0 0 0 4px; font-size: 12px; color: #c3d0dc; }
+.shift-controls { display: flex; align-items: center; gap: 12px; }
+.shift-clock { font: 600 26px ui-monospace, monospace; font-variant-numeric: tabular-nums; color: #8fa2b3; min-width: 4ch; text-align: right; }
+.shift-clock.running { color: hsl(145, 75%, 45%); }
+.shift-clock.complete { color: hsl(0, 85%, 55%); }
+.shift-controls button, .shift-result button {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 6px 14px;
+  font: 650 12px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .04em; color: #101720;
+  background: hsl(35, 95%, 55%); border: 0; border-radius: 6px; cursor: pointer;
+}
+.shift-controls button:disabled { opacity: .4; cursor: default; }
+.shift-result {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(340px, calc(100% - 32px));
+  padding: 22px 24px; background: rgba(16, 24, 38, .85); border: 1px solid #ffffff1a; border-radius: 10px; backdrop-filter: blur(12px);
+}
+.shift-result h2 { margin: 6px 0 14px; }
+.shift-result dl { display: grid; grid-template-columns: 1fr auto; gap: 6px 16px; margin: 0 0 18px; font-size: 13px; }
+.shift-result dt { color: #9caebc; }
+.shift-result dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.shift-result .grade, .shift-result .final-score { font-weight: 700; color: #d5b989; }
 @media (pointer: coarse) {
-  .camera-presets button, .case-actions button { min-height: 48px; min-width: 48px; }
+  .camera-presets button, .case-actions button, .shift-controls button { min-height: 48px; min-width: 48px; }
   kbd { display: none; }
 }
 @media (max-width: 650px) {
   .header { padding: 16px; flex-wrap: wrap; gap: 12px; }
-  .engine-status { font-size: 10px; }
+  .engine-status { display: none; }
+  .shift-clock { font-size: 22px; }
   .viewport-label { top: 20px; left: 16px; }
   h2 { font-size: 20px; }
   .dimensions { display: none; }
@@ -54,6 +74,7 @@ kbd { font: 10px ui-monospace, monospace; color: #8fa2b3; border: 1px solid #fff
 @media (max-height: 500px) {
   .placement-status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
   .header { padding: 10px 18px; }
+  .engine-status { display: none; }
   .viewport-label { top: 12px; left: 18px; }
   h2 { font-size: 16px; margin: 0; }
   /* Short screens: the HUD shrinks to its essentials so the pallet keeps the clear band. */

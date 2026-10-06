@@ -164,6 +164,8 @@ pub enum Rejection {
     AboveCeiling,
     ExcessOverhang,
     Unsupported,
+    /// Mode 1: a heavy case resting directly on a light or fragile one.
+    HeavyOnLight,
 }
 
 impl Rejection {
@@ -173,6 +175,7 @@ impl Rejection {
             Rejection::AboveCeiling => "above_ceiling",
             Rejection::ExcessOverhang => "excess_overhang",
             Rejection::Unsupported => "unsupported",
+            Rejection::HeavyOnLight => "heavy_on_light",
         }
     }
 }

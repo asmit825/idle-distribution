@@ -13,7 +13,7 @@ import type { Hit, PointerHandlers, ScreenPoint } from './PointerManager';
 export type PlacementTarget = { kind: 'bay'; bay: StagingBay } | { kind: 'case'; id: number };
 
 export type PlacementEvent =
-  | { type: 'pick'; sku: SkuDef }
+  | { type: 'pick'; sku: SkuDef; bay: StagingBay }
   | { type: 'placed'; sku: SkuDef; placed: PlacedCase; snapshot: EngineSnapshot }
   | { type: 'returned'; sku: SkuDef; rejection: Rejection | null }
   | { type: 'select'; target?: PlacementTarget };
@@ -40,6 +40,14 @@ export interface PlacementControllerOptions {
   parent: Object3D;
   /** The canvas size in CSS pixels. */
   viewport: () => { width: number; height: number };
+  /** The floor; the sandbox's eight bays by default. */
+  bays?: readonly StagingBay[];
+  /** Whether a bay refills after its case is placed (the sandbox), or stays empty (Mode 1). */
+  refill?: boolean;
+  /** Asked as a case leaves the floor; false refuses the pick. */
+  pick?: (bay: StagingBay) => boolean;
+  /** Asked before a held case lands in a valid spot; false returns it to the floor. */
+  canDrop?: () => boolean;
   onEvent?: (event: PlacementEvent) => void;
 }
 
@@ -73,6 +81,9 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
   private heldCase?: HeldCase;
   private heldCarton?: Carton;
   private readonly bayCartons = new Map<StagingBay, Carton>();
+  /** Ids of bays whose case is on the pallet and that do not refill. */
+  private readonly emptied = new Set<number>();
+  private locked = false;
   private selection?: PlacementTarget;
   /** Scene volumes of the placed cases, rebuilt with each snapshot. */
   private placedBoxes: { id: number; box: Box3 }[] = [];
@@ -84,12 +95,32 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
     this.outline.name = 'selection';
     this.outline.visible = false;
     options.parent.add(this.outline);
-    for (const bay of STAGING_BAYS) {
+    this.setBays(options.bays ?? STAGING_BAYS);
+  }
+
+  /** Bays with a case waiting in them, in layout order. */
+  get bays(): StagingBay[] {
+    return [...this.bayCartons.keys()];
+  }
+
+  /** Re-stages the floor, for example after an orientation change. Cancels any drag. */
+  setBays(bays: readonly StagingBay[]) {
+    this.cancel();
+    if (this.selection?.kind === 'bay') this.tap(undefined);
+    this.removeBayCartons();
+    for (const bay of bays) {
+      if (this.emptied.has(bay.id)) continue;
       const carton = orient(createBoxMesh(bay.sku), bay.yaw);
       carton.position.copy(bay.position);
       this.bayCartons.set(bay, carton);
-      options.parent.add(carton);
+      this.options.parent.add(carton);
     }
+  }
+
+  /** Ends interaction with the floor: cancels any drag; cases can be selected but not picked. */
+  lock() {
+    this.locked = true;
+    this.cancel();
   }
 
   get held(): Readonly<HeldCase> | undefined {
@@ -109,9 +140,9 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
       const distance = hit?.distanceTo(ray.origin);
       if (distance !== undefined && (!nearest || distance < nearest.distance)) nearest = { target, distance };
     };
-    for (const bay of STAGING_BAYS) consider(bay.bounds, { kind: 'bay', bay });
+    for (const bay of this.bayCartons.keys()) consider(bay.bounds, { kind: 'bay', bay });
     for (const { id, box } of this.placedBoxes) consider(box, { kind: 'case', id });
-    return nearest && { target: nearest.target, draggable: nearest.target.kind === 'bay' };
+    return nearest && { target: nearest.target, draggable: nearest.target.kind === 'bay' && !this.locked };
   }
 
   /** Selects the tapped case; tapping it again, or tapping nothing, deselects. */
@@ -122,11 +153,14 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
   }
 
   dragStart(target: PlacementTarget) {
-    if (target.kind !== 'bay') return;
-    this.heldCase = { bay: target.bay, orientation: { yaw: target.bay.yaw, flipped: false } };
-    this.bayCartons.get(target.bay)!.visible = false;
+    if (target.kind !== 'bay' || this.locked || this.heldCase) return;
+    const { bay } = target;
+    const carton = this.bayCartons.get(bay);
+    if (!carton || this.options.pick?.(bay) === false) return;
+    this.heldCase = { bay, orientation: { yaw: bay.yaw, flipped: false } };
+    carton.visible = false;
     this.rebuildHeldCarton();
-    this.emit({ type: 'pick', sku: target.bay.sku });
+    this.emit({ type: 'pick', sku: bay.sku, bay });
   }
 
   dragMove(point: ScreenPoint) {
@@ -161,12 +195,13 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
     if (!held) return undefined;
     this.release();
     const { sku } = held.bay;
-    if (!held.aim || held.aim.validation.status === 'invalid') {
+    if (!held.aim || held.aim.validation.status === 'invalid' || this.options.canDrop?.() === false) {
       this.emit({ type: 'returned', sku, rejection: held.aim?.validation.rejection ?? null });
       return 'returned';
     }
     const { gridX, gridY } = held.aim;
     const snapshot = this.options.engine.commit_placement(sku.id, gridX, gridY, held.orientation.yaw, held.orientation.flipped);
+    if (this.options.refill === false) this.emptyBay(held.bay);
     this.setSnapshot(snapshot);
     this.updateOutline();
     // Ids only grow, so the new case is last.
@@ -198,10 +233,24 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
     this.ghost.dispose();
     this.outline.geometry.dispose();
     this.outline.material.dispose();
+    this.removeBayCartons();
+  }
+
+  private removeBayCartons() {
     for (const carton of this.bayCartons.values()) {
       this.options.parent.remove(carton);
       carton.dispose();
     }
+    this.bayCartons.clear();
+  }
+
+  /** Its case is on the pallet for good; the bay's carton leaves the floor. */
+  private emptyBay(bay: StagingBay) {
+    this.emptied.add(bay.id);
+    const carton = this.bayCartons.get(bay)!;
+    this.bayCartons.delete(bay);
+    this.options.parent.remove(carton);
+    carton.dispose();
   }
 
   /**

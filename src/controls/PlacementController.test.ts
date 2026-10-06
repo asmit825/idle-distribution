@@ -1,12 +1,13 @@
 import { readFileSync } from 'node:fs';
 import { createCanvas } from '@napi-rs/canvas';
-import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Box3, Color, Group, PerspectiveCamera, Vector3 } from 'three';
 import { Engine, initSync } from '../../pkg/pallet_sim';
 import { Carton } from '../rendering/BoxMesh';
 import { disposeBoxMaterials } from '../rendering/materials';
 import { toScene } from '../scene/coordinates';
-import { STAGING_BAYS } from '../scene/staging';
+import { stageFloor } from '../game/FloorStaging';
+import { STAGING_BAYS, type StagingBay } from '../scene/staging';
 import type { PalletEngine } from '../types/engine';
 import { PlacementController, type PlacementEvent } from './PlacementController';
 
@@ -241,4 +242,122 @@ it('treats only an off-pallet anchor as red; other engine failures surface', () 
   controller = new PlacementController({ engine: failing, camera, parent: scene, viewport: () => VIEWPORT });
   controller.dragStart({ kind: 'bay', bay: bay('SKU-HF') });
   expect(() => controller.dragMove(screenOf(24, 20))).toThrow('unknown SKU');
+});
+
+describe('on a Mode 1 floor', () => {
+  let floor: StagingBay[];
+  /** The shift clock's `performance.now()`. */
+  let now: number;
+  const first = (skuId: string) => floor.find(bay => bay.sku.id === skuId)!;
+  const phase = () => engine.get_snapshot().mode1!.phase;
+  /** Where the top-center of a floor carton appears on screen. */
+  const screenOfCarton = ({ bounds }: StagingBay) => {
+    const top = bounds.getCenter(new Vector3()).setY(bounds.max.y).project(camera);
+    return { x: (top.x + 1) / 2 * VIEWPORT.width, y: (1 - top.y) / 2 * VIEWPORT.height };
+  };
+
+  beforeEach(() => {
+    controller.dispose();
+    now = 1_000;
+    engine.start_mode1(42n);
+    floor = stageFloor(engine.floor_cases(), 'radial');
+    controller = new PlacementController({
+      engine: engine as PalletEngine,
+      camera,
+      parent: scene,
+      viewport: () => VIEWPORT,
+      bays: floor,
+      refill: false,
+      pick: bay => {
+        try { engine.pick_case(bay.id, now); return true; } catch { return false; }
+      },
+      canDrop: () => engine.tick(now)!.phase !== 'complete',
+      onEvent: event => events.push(event),
+    });
+  });
+
+  it('starts the clock on the first pick and empties each bay once its case is placed', () => {
+    expect(visibleCartons()).toHaveLength(100);
+    const light = first('SKU-LT');
+    expect(phase()).toBe('staged');
+    controller.dragStart({ kind: 'bay', bay: light });
+    expect(phase()).toBe('running');
+    expect(events[0]).toEqual({ type: 'pick', sku: light.sku, bay: light });
+    controller.dragMove(screenOf(24, 20));
+    expect(controller.drop()).toBe('placed');
+    expect(engine.get_snapshot().mode1!.cases_on_floor).toBe(99);
+    expect(visibleCartons()).toHaveLength(99);
+    expect(controller.hitTest(screenOfCarton(light))?.target).not.toEqual({ kind: 'bay', bay: light });
+
+    // Its bay stays empty: there is nothing left to pick there.
+    controller.dragStart({ kind: 'bay', bay: light });
+    expect(controller.held).toBeUndefined();
+  });
+
+  it('shows a heavy case over a light one in red and returns it to the floor on release', () => {
+    controller.dragStart({ kind: 'bay', bay: first('SKU-LT') });
+    controller.dragMove(screenOf(24, 20));
+    controller.drop();
+    const heavy = first('SKU-HC');
+    controller.dragStart({ kind: 'bay', bay: heavy });
+    controller.dragMove(screenOf(24, 20, 15)); // the Light Tall's top
+    expect(controller.held!.aim!.validation).toMatchObject({ status: 'invalid', rejection: 'heavy_on_light', elevation_in: 15 });
+    expect(controller.ghost.status).toBe('invalid');
+    expect(controller.drop()).toBe('returned');
+    expect(events.at(-1)).toEqual({ type: 'returned', sku: heavy.sku, rejection: 'heavy_on_light' });
+    expect(visibleCartons()).toHaveLength(99);
+    expect(controller.hitTest(screenOfCarton(heavy))).toEqual({ target: { kind: 'bay', bay: heavy }, draggable: true });
+  });
+
+  it('returns the held case if the shift ran out before the drop', () => {
+    const medium = first('SKU-MQ');
+    controller.dragStart({ kind: 'bay', bay: medium });
+    controller.dragMove(screenOf(24, 20));
+    expect(controller.ghost.status).toBe('valid');
+    now += 60_000; // no frame has ticked the clock since
+    expect(controller.drop()).toBe('returned');
+    expect(events.at(-1)).toEqual({ type: 'returned', sku: medium.sku, rejection: null });
+    expect(engine.get_snapshot()).toMatchObject({ cases_placed: 0, mode1: { phase: 'complete', end_reason: 'time_up' } });
+  });
+
+  it('refuses a pick the shift turns down', () => {
+    engine.ship(now);
+    controller.dragStart({ kind: 'bay', bay: first('SKU-MQ') });
+    expect(controller.held).toBeUndefined();
+    expect(events).toEqual([]);
+    expect(visibleCartons()).toHaveLength(100);
+  });
+
+  it('locking cancels the held case and leaves the floor to look at, not pick', () => {
+    const heavy = first('SKU-HC');
+    controller.dragStart({ kind: 'bay', bay: heavy });
+    controller.dragMove(screenOf(24, 20));
+    controller.lock();
+    expect(controller.held).toBeUndefined();
+    expect(controller.ghost.visible).toBe(false);
+    expect(events.at(-1)).toEqual({ type: 'returned', sku: heavy.sku, rejection: null });
+    expect(visibleCartons()).toHaveLength(100);
+    expect(controller.hitTest(screenOfCarton(heavy))).toEqual({ target: { kind: 'bay', bay: heavy }, draggable: false });
+    controller.dragStart({ kind: 'bay', bay: heavy });
+    expect(controller.held).toBeUndefined();
+  });
+
+  it('re-stages the floor in a new layout, keeping placed cases off it', () => {
+    const light = first('SKU-LT');
+    controller.dragStart({ kind: 'bay', bay: light });
+    controller.dragMove(screenOf(24, 20));
+    controller.drop();
+    const portrait = stageFloor(engine.floor_cases(), 'portrait');
+    controller.setBays(portrait);
+    expect(controller.bays).toEqual(portrait.filter(bay => bay.id !== light.id));
+    // Each carton renders 1/8" inside its footprint.
+    const round = (n: number) => Math.round(n * 1000) / 1000;
+    const xs = (values: number[]) => values.map(round).sort((a, b) => a - b);
+    const onFloor = visibleCartons().filter(carton => carton.min[1] < 0);
+    expect(xs(onFloor.map(carton => carton.min[0]))).toEqual(
+      xs(portrait.filter(bay => bay.id !== light.id).map(bay => bay.bounds.min.x + 0.125)),
+    );
+    const emptied = portrait.find(bay => bay.id === light.id)!;
+    expect(controller.hitTest(screenOfCarton(emptied))?.target).not.toEqual({ kind: 'bay', bay: emptied });
+  });
 });
