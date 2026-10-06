@@ -68,7 +68,7 @@ npx playwright install chromium
 npm test
 ```
 
-The suite runs the Rust unit tests, exercises the actual compiled Wasm API, runs the Vitest unit tests under `src/` (pallet geometry including raycasts through both fork openings, Rust ↔ TypeScript SKU catalog parity, procedural carton textures, and carton meshes), and checks browser startup, orbit, and desktop/phone resize. Browser tests start their own dev server on port 4173. Individual commands are `npm run test:rust`, `npm run test:wasm`, `npm run test:unit`, and `npm run test:browser`; build Wasm before running `test:wasm` or `test:unit` alone. Texture tests paint on a real Skia canvas via the `@napi-rs/canvas` dev dependency.
+The suite runs the Rust unit tests (catalog, stacking physics, and scoring), exercises the actual compiled Wasm API (including a `validate_placement` latency benchmark), runs the Vitest unit tests under `src/` (pallet geometry including raycasts through both fork openings, Rust ↔ TypeScript SKU catalog parity, procedural carton textures, and carton meshes), and checks browser startup, orbit, and desktop/phone resize. Browser tests start their own dev server on port 4173. Individual commands are `npm run test:rust`, `npm run test:wasm`, `npm run test:unit`, and `npm run test:browser`; build Wasm before running `test:wasm` or `test:unit` alone. Texture tests paint on a real Skia canvas via the `@napi-rs/canvas` dev dependency.
 
 ### Geometry conventions
 
@@ -82,4 +82,32 @@ The `uuid` override updates the top-level-await plugin's transitive dependency t
 
 The 8-SKU catalog (SPEC-01 §2.2) lives in `crates/pallet_sim/src/sku.rs` and is mirrored by `src/types/catalog.ts`; the Wasm export `sku_catalog()` lets the unit tests enforce parity. `src/rendering/materials.ts` paints every face on its own canvas at 32 px per inch, so no face stretches, with kraft, flutes, tape style, weight badge, Code 39 shipping label, and handling marks. Red encodes bump height and green encodes roughness in one surface texture. Materials are cached per SKU and shared by every carton of that SKU.
 
-`createBoxMesh(sku, { crushed })` in `src/rendering/BoxMesh.tsx` returns a carton whose origin is the center of its base. It renders 1/8" inside its grid footprint on each side (`cartonSize` in `materials.ts`), so flush neighbors never share a plane. Setting `crushed` eases over 0.25 s to 0.92 height with the base planted. A morph target sinks the top and bows the sides at the same time. The lateral bulge is 1.03, capped 1/64" inside the grid footprint so crushed neighbors never touch; in practice the cap always applies. Anything stacked on a crushed carton must be lowered by the stacking engine (ticket 03). The `<BoxMesh parent={…} sku={…} />` component mounts one into the imperative scene; the viewport stages one carton of each SKU on the floor and disposes the cached materials on unmount.
+`createBoxMesh(sku, { crushed })` in `src/rendering/BoxMesh.tsx` returns a carton whose origin is the center of its base. It renders 1/8" inside its grid footprint on each side (`cartonSize` in `materials.ts`), so flush neighbors never share a plane. Setting `crushed` eases over 0.25 s to 0.92 height with the base planted. A morph target sinks the top and bows the sides at the same time. The lateral bulge is 1.03, capped 1/64" inside the grid footprint so crushed neighbors never touch; in practice the cap always applies. The engine keeps crushed cases at full height so the stack never shifts. Lowering whatever sits on a crushed carton is a rendering job. The `<BoxMesh parent={…} sku={…} />` component mounts one into the imperative scene; the viewport stages one carton of each SKU on the floor and disposes the cached materials on unmount.
+
+### Stacking engine
+
+`Engine` (in `crates/pallet_sim/src/lib.rs`) is the authoritative pallet. It runs synchronously on the main thread:
+
+- `validate_placement(sku_id, grid_x, grid_y, rot_z, flipped)` → `{ status: 'valid' | 'warning' | 'invalid', rejection, elevation_in, overhang_in, unsupported_fraction, would_crush }`. It does not change the pallet.
+- `commit_placement(...)` → snapshot, or throws `placement rejected: <reason>`.
+- `remove_placement(case_id)` → snapshot. It throws while another case rests on that one.
+- `get_snapshot()` → `{ cases_placed, total_weight_lbs, max_height_inches, volume_utilization_pct, max_overhang_inches, cog_inches, cog_drift_inches, crushed_count, quality_pct, composite_score, grade, placed_cases: [{ id, sku_id, grid_x, grid_y, elevation_z, rotation_yaw, flipped, crushed, weight_lbs, load_lbs }] }`.
+
+**Placement**
+- `grid_x`/`grid_y` give the case's min-corner cell; −1 allows a 2" overhang.
+- `rot_z` is 0, 90, 180, or 270 degrees. Unknown SKUs, other yaws, and anchors far off the deck throw.
+- `flipped` rolls the case onto its side, so its width becomes its height.
+- Geometry is exact integer inches (`grid.rs`), so non-cell footprints such as a flipped 15" side still work.
+- A case settles on the highest top beneath its footprint. Rejections, in priority order: above the 60" ceiling, more than 2" overhang, more than 30% of the base unsupported. Exactly 30% unsupported is allowed.
+- Status is `warning` for a soft overhang, or when the case's weight would crush a case below.
+
+**Loads** (`physics.rs`)
+- Each case passes its weight plus its own load to its supports, pro-rata by contact area. The shares are normalized over the supported area, so all of the weight reaches the supports.
+- A case crushes when its cumulative load exceeds its top-load capacity; a load equal to capacity is safe. Crushing is permanent.
+
+**Scoring** (`scoring.rs`, SPEC-01 §2.4)
+- Quality = 100 − 15 × crushed − 5 × max overhang (inches) − drift + interlock, clamped to 0–100.
+- Drift = 20% × distance of the center of gravity from (24, 20) ÷ 12", capped at 20%.
+- Interlock adds 2% for each elevation where some case bridges two or more supports, up to 10%.
+- Composite score = cases × quality. Grades: S ≥ 90, A ≥ 80, B ≥ 70, C ≥ 60, F below 60.
+
