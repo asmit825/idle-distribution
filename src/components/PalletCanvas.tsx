@@ -13,7 +13,7 @@ import { COMPACT_QUERY, useCompact } from './hud/useCompact';
 import { DesktopDashboard } from './hud/DesktopDashboard';
 import type { ActiveCase, RoundHud } from './hud/types';
 import { PlacementController, type PlacementEvent } from '../controls/PlacementController';
-import { PointerManager } from '../controls/PointerManager';
+import { PointerManager, type NudgeDirection } from '../controls/PointerManager';
 import { BoxMesh } from '../rendering/BoxMesh';
 import { ConveyorBelt, CONVEYOR_BOUNDS } from '../rendering/ConveyorBelt';
 import { CameraController, type CameraPreset, type Insets } from '../rendering/CameraController';
@@ -213,6 +213,17 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
           return positions;
         },
         deckPoint: (x, y, elevation = 0) => toClient(toScene(x, y, elevation)),
+        floorBounds: () => {
+          const extent = { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity };
+          for (const { bounds: { min, max } } of placement.bays) {
+            for (const corner of [0, 1, 2, 3, 4, 5, 6, 7]) {
+              const { x, y } = toClient(new Vector3(corner & 1 ? max.x : min.x, corner & 2 ? max.y : min.y, corner & 4 ? max.z : min.z));
+              extent.left = Math.min(extent.left, x); extent.right = Math.max(extent.right, x);
+              extent.top = Math.min(extent.top, y); extent.bottom = Math.max(extent.bottom, y);
+            }
+          }
+          return extent;
+        },
         bayCarton: (skuId, yaw) => {
           // The first matching carton whose top is not hidden behind a neighbor.
           const rect = container.getBoundingClientRect();
@@ -284,7 +295,7 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
       try { interaction.current?.placement.remove(); }
       catch (error) { setMessage(String(error).replace(/^Error: /, '')); }
     }, done: () => interaction.current?.placement.drop(),
-    nudge: (direction: 'up' | 'down' | 'left' | 'right') => interaction.current?.placement.nudge(direction) };
+    nudge: (direction: NudgeDirection) => interaction.current?.placement.nudge(direction) };
   const cameras = <nav className="camera-presets" aria-label="Camera views">{PRESETS.map(({ name, label }) =>
     <button key={name} type="button" onClick={() => interaction.current?.camera.preset(name)}>{label}</button>)}</nav>;
 
@@ -373,6 +384,8 @@ declare global {
     __palletTest?: {
       conveyorCartons(): Record<number, { x: number; y: number; z: number }>;
       deckPoint(x: number, y: number, elevation?: number): { x: number; y: number };
+      /** The client-space box around every floor carton. */
+      floorBounds(): { left: number; top: number; right: number; bottom: number };
       /** The top of a visible floor carton of this SKU, optionally lying at `yaw`. */
       bayCarton(skuId: string, yaw?: number): { x: number; y: number };
     };

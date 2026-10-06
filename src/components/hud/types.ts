@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react';
+import type { NudgeDirection } from '../../controls/PointerManager';
 import type { Orientation } from '../../scene/coordinates';
 import type { SkuDef } from '../../types/catalog';
 import type { ConveyorStatus, EngineSnapshot } from '../../types/engine';
@@ -33,7 +34,7 @@ export interface CaseActions {
   flip(): void;
   remove(): void;
   done(): void;
-  nudge(direction: 'up' | 'down' | 'left' | 'right'): void;
+  nudge(direction: NudgeDirection): void;
 }
 /** Ticket 07's display label for the engine's S tier; scoring stays authoritative in Rust. */
 export const gradeLabel = (grade: EngineSnapshot['grade']) => grade === 'S' ? 'A+' : grade;

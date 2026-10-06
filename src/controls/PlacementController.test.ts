@@ -386,6 +386,25 @@ it('picks a selected carton for thumb controls and nudges one grid cell relative
   expect(engine.get_snapshot().placed_cases[0]).toMatchObject({ grid_x: 9, grid_y: 2 });
 });
 
+it('keeps nudges on one axis in the isometric view, however the camera drifts around 45°', () => {
+  controller.tap({ kind: 'bay', bay: bay('SKU-HF') });
+  controller.pickSelected();
+  const start = controller.held!.aim!;
+  // Damping and height tracking leave the iso camera a hair to either side of the X = Z diagonal.
+  for (const drift of [1e-9, -1e-9, 1e-9]) {
+    camera.position.set(80, 80, 80 + drift);
+    camera.lookAt(0, 0, 0);
+    camera.updateMatrixWorld();
+    controller.nudge('right');
+  }
+  // The tie goes to the pallet's long (48″) axis.
+  expect(controller.held?.aim).toMatchObject({ gridX: start.gridX + 3, gridY: start.gridY });
+  controller.nudge('left');
+  controller.nudge('left');
+  controller.nudge('left');
+  expect(controller.held?.aim).toMatchObject({ gridX: start.gridX, gridY: start.gridY });
+});
+
 it('returns a removed exposed case to the Mode 1 floor and updates the authoritative load metrics', () => {
   controller.dispose();
   engine.start_mode1(42n);

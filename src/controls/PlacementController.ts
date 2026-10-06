@@ -8,7 +8,7 @@ import { caseBox, CELL_IN, DECK_Y, orientedSize, placedCaseBox, toDomain, type O
 import { STAGING_BAYS, type StagingBay } from '../scene/staging';
 import type { SkuDef } from '../types/catalog';
 import type { EngineSnapshot, PalletEngine, PlacedCase, Rejection, Validation } from '../types/engine';
-import type { Hit, PointerHandlers, ScreenPoint } from './PointerManager';
+import type { Hit, NudgeDirection, PointerHandlers, ScreenPoint } from './PointerManager';
 
 export type PlacementTarget = { kind: 'bay'; bay: StagingBay } | { kind: 'case'; id: number };
 
@@ -58,6 +58,11 @@ export interface PlacementControllerOptions {
 const DECK_PLANE = new Plane(new Vector3(0, 1, 0), -DECK_Y);
 /** Tolerance for deciding which face of a box a ray hit. */
 const EPSILON = 1e-6;
+/**
+ * How close the camera's right vector may come to a pallet diagonal and still count as lying on
+ * it. The isometric view sits exactly on one, and damping drifts it by far less than this.
+ */
+const NUDGE_TIE = 1e-3;
 /** The held carton floats this far above its ghost, so the landing volume stays visible. */
 const HOVER_IN = 2;
 /** SPEC-01 §7.1 "Selected / Active" accent. */
@@ -206,11 +211,12 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
   }
 
   /** One 2-inch grid step along the closest screen-relative pallet axis. */
-  nudge(direction: 'up' | 'down' | 'left' | 'right') {
+  nudge(direction: NudgeDirection) {
     const held = this.heldCase;
     if (!held?.aim || this.locked) return;
     const right = new Vector3().setFromMatrixColumn(this.options.camera.matrixWorld, 0);
-    const x = Math.abs(right.x) >= Math.abs(right.z) ? Math.sign(right.x) : 0;
+    // On a diagonal view, right goes along the pallet's long (48″) X axis.
+    const x = Math.abs(right.x) + NUDGE_TIE >= Math.abs(right.z) ? Math.sign(right.x) : 0;
     const y = x ? 0 : Math.sign(right.z);
     const [dx, dy] = direction === 'right' ? [x, y] : direction === 'left' ? [-x, -y]
       : direction === 'up' ? [y, -x] : [-y, x];

@@ -5,6 +5,13 @@ export const TOUCH_LIFT_PX = 64;
 /** Wheel events closer together than this belong to one scroll (trackpads send dozens). */
 const WHEEL_BURST_GAP_MS = 200;
 
+export type NudgeDirection = 'up' | 'down' | 'left' | 'right';
+
+/** Fine-nudge keys (SPEC-01 §6.2), by lowercased `KeyboardEvent.key`. */
+const NUDGE_KEYS: Record<string, NudgeDirection> = {
+  arrowup: 'up', arrowdown: 'down', arrowleft: 'left', arrowright: 'right', w: 'up', s: 'down', a: 'left', d: 'right',
+};
+
 /** CSS pixels from the element's top-left corner. */
 export interface ScreenPoint {
   x: number;
@@ -29,6 +36,8 @@ export interface PointerHandlers<T> {
   cancel(): void;
   rotate(): void;
   flip(): void;
+  /** One 2-inch step of the held case, relative to the camera. */
+  nudge(direction: NudgeDirection): void;
 }
 
 interface Press<T> {
@@ -159,11 +168,18 @@ export class PointerManager<T> {
     this.handlers.rotate();
   };
 
+  /** While dragging: R rotates, F flips, and arrows or WASD nudge (repeating while held). */
   private readonly onKeyDown = (event: KeyboardEvent) => {
-    if (!this.press?.dragging || event.repeat || event.metaKey || event.ctrlKey || event.altKey) return;
+    if (!this.press?.dragging || event.metaKey || event.ctrlKey || event.altKey) return;
     if (isEditable(event.target)) return;
     const key = event.key.toLowerCase();
-    if (key !== 'r' && key !== 'f') return;
+    const direction = NUDGE_KEYS[key];
+    if (direction) {
+      event.preventDefault();
+      this.handlers.nudge(direction);
+      return;
+    }
+    if (event.repeat || (key !== 'r' && key !== 'f')) return;
     event.preventDefault();
     if (key === 'r') this.handlers.rotate();
     else this.handlers.flip();

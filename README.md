@@ -70,6 +70,29 @@ npm test
 
 The suite runs the Rust unit tests (catalog, stacking physics, scoring, and the Mode 1 shift), exercises the actual compiled Wasm API (including a `validate_placement` latency benchmark), runs the Vitest unit tests under `src/` (pallet geometry including raycasts through both fork openings, Rust ↔ TypeScript SKU catalog parity, procedural carton textures, carton meshes, the pointer pipeline, placement against the real Wasm engine with a per-move latency check, Mode 1 floor layouts, and camera framing), and checks browser startup, orbit, desktop/phone resize, mouse drag-and-drop, and a full Mode 1 shift on Playwright's fake clock. Browser tests start their own dev server on port 4173. Individual commands are `npm run test:rust`, `npm run test:wasm`, `npm run test:unit`, and `npm run test:browser`; build Wasm before running `test:wasm` or `test:unit` alone. Texture tests paint on a real Skia canvas via the `@napi-rs/canvas` dev dependency.
 
+#### Full verification pipeline (ticket 09)
+
+```sh
+npx playwright install chromium firefox webkit
+npm run test:all
+```
+
+`test:all` runs `npm test`, then:
+
+- `npm run test:bench`: `crates/pallet_sim/benches/validation_bench.rs` times 10,000 native `Pallet::validate` calls on a 100-case pallet and fails above 0.5 ms per call. It averages about 1.4 µs on an M4 Pro. The Wasm boundary is timed separately in `tests/engine.test.mjs` (budget 0.2 ms, plus a < 50 KB snapshot check). `cargo test` also runs `tests/property_tests.rs`, which replays 64 seeded random placement sequences. Validation must predict every commit, cases stay under the ceiling with at most 2" overhang, every case's weight reaches the deck, overloaded cases are crushed and stay crushed, quality stays within 0–100, and replays are identical.
+- `npm run test:e2e`: `tests/e2e/touch_test.js` is a standalone Node script that runs its own dev server on port 4175 and drives Chromium with raw CDP `Input.dispatchTouchEvent` multi-touch. It passes 23/23 assertions (D-pad and arrow-key steps are also checked for on-screen direction and reversal):
+  - iPhone 13, portrait then rotated to landscape: compact HUD, 48px thumb targets, floor framing and re-staging, tap-to-pick with jitter, D-pad tap and hold-to-repeat, Remove, the 64px drag lift, second-finger rotation, and drops.
+  - Camera gestures on a fresh phone floor: swipe orbit, pinch zoom, two-finger pan.
+  - iPad Pro 11 landscape: compact from the coarse pointer alone, plus a drag-and-drop.
+  - Mode 1 ↔ Mode 2 toggling by touch, with a conveyor pick.
+  - Desktop mouse drag-and-drop with `R`/`F`, and arrow/WASD nudges.
+
+  The suite fails if any page logs a console error or warning.
+- `npm run test:perf`: `tests/e2e/perf_test.js` profiles frame cadence on desktop at 1440×900 @2x and on iPhone 13. Each runs a Mode 1 shift with all 100 cartons in the scene and a layer of 12 stacked on the pallet. It samples 240 frames at rest and 240 while a carton is dragged over the stack, and requires ≥ 58 FPS with at most 2% of frames over 25 ms. It refuses to pass on a software renderer. Before each sample it times a blank page, and if the host itself caps frames below 60 Hz, it fails with a message to plug in. On battery or in Low Power Mode, macOS can throttle every page to 30 FPS.
+- `npm run test:compat`: `tests/compat/console.spec.ts` boots the app, drags a carton onto the pallet, and switches modes in Chrome, Firefox, and WebKit (Safari's engine) with no console errors or warnings. It adds Edge when Edge is installed.
+
+The e2e and perf scripts launch Playwright's full Chromium build in new headless mode, which renders WebGL on the host GPU. The default headless shell falls back to SwiftShader. In development, `window.__palletTest.floorBounds()` returns the client-space box around every floor carton, which the suite uses to check framing.
+
 ### Geometry conventions
 
 One rendering unit is one inch. Three.js uses Y up, with the pallet's geometric center at `(0, 0, 0)` and bounds `X ±24`, `Y ±2.375`, `Z ±20`. Top deck elevation is `Y = 2.375`. The domain model uses corner-based X/Y and vertical Z; future case rendering should map `(x, y, elevation)` to `(x - 24, elevation + 2.375, y - 20)`.
@@ -129,7 +152,7 @@ A 60-second shift (SPEC-01 §5.1). The rules and the clock live in `crates/palle
 
 In the sandbox, each of the eight floor bays (`src/scene/staging.ts`) holds one carton and refills after a placement. In Mode 1, a bay stays empty once its case is on the pallet, and the floor locks when the shift ends.
 
-- **Pointer pipeline** (`src/controls/PointerManager.ts`): one Pointer Events path for mouse, pen, and touch. A press on a floor carton is claimed from the camera. Moving it 6px starts a drag; a shorter press is a tap that selects or deselects. Presses anywhere else go to the camera, and short ones tap: on a placed case they select it, and on empty space they clear the selection. Touch drags aim 64px above the finger. While dragging, `R`, the mouse wheel (once per scroll burst), a right-click, or a second finger rotates 90° clockwise, and `F` flips. `pointercancel` returns the case.
+- **Pointer pipeline** (`src/controls/PointerManager.ts`): one Pointer Events path for mouse, pen, and touch. A press on a floor carton is claimed from the camera. Moving it 6px starts a drag; a shorter press is a tap that selects or deselects. Presses anywhere else go to the camera, and short ones tap: on a placed case they select it, and on empty space they clear the selection. Touch drags aim 64px above the finger. While dragging, `R`, the mouse wheel (once per scroll burst), a right-click, or a second finger rotates 90° clockwise, `F` flips, and the arrow or WASD keys nudge the case one 2" cell relative to the camera (holding a key repeats; moving the pointer re-aims). In the isometric view, which sits exactly on a pallet diagonal, right/left run along the pallet's 48" X axis. `pointercancel` returns the case.
 - **Placement** (`src/controls/PlacementController.ts`): the pointer ray hits the deck plane or a placed case. On a case's top, the held case stacks there; on a side, it goes beside that face. The held case centers on that point and its corner snaps to the 2" grid. The engine's `validate_placement` then colors the ghost green, yellow, or red (`src/rendering/GhostBox.ts`, with a soft contact shadow). The held carton floats 2" above its ghost. Dropping in green or yellow commits; dropping in red returns the carton to its bay. A move averages well under 0.5 ms on a 100-case pallet.
 - **Camera** (`src/rendering/CameraController.ts`): OrbitControls with `Iso` (35.264° up, 45° around), `Top`, `Side` (from the +X end, between the staging rows), and `Reset`. Presets keep your zoom and pan; `Reset` discards them. The look-at point eases upward by half the stack height. `frameCompactCamera` uses `setViewOffset` to center the view in the clear band between HUD overlays, then binary-searches the closest distance that keeps the pallet, the stack, and every bay inside that band. Overlays marked `data-chrome` count as HUD on compact layouts (`COMPACT_QUERY`, SPEC-01 §7.3).
 - In development, `window.__palletTest` gives browser tests the screen positions of deck points and of visible floor cartons by SKU and yaw.

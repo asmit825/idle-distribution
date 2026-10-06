@@ -28,6 +28,7 @@ const handlers: PointerHandlers<Target> = {
   cancel: () => log.push('cancel'),
   rotate: () => log.push('rotate'),
   flip: () => log.push('flip'),
+  nudge: direction => log.push(`nudge ${direction}`),
 };
 
 beforeEach(() => {
@@ -139,6 +140,24 @@ it('rotates on R and flips on F while dragging, ignoring repeats, shortcuts, and
   expect(log).toEqual(['dragStart staged-carton', 'move 120,100', 'rotate', 'flip']);
 });
 
+it('nudges the held case one step per arrow or WASD press while dragging, repeating while held', () => {
+  fire(keys, 'keydown', { key: 'ArrowUp' });
+  pointer('down', 200, 150);
+  pointer('move', 220, 150);
+  const up = fire(keys, 'keydown', { key: 'ArrowUp' });
+  expect(up.defaultPrevented).toBe(true);
+  fire(keys, 'keydown', { key: 'ArrowUp', repeat: true });
+  for (const key of ['ArrowLeft', 'ArrowDown', 'ArrowRight', 'w', 'A', 's', 'd']) fire(keys, 'keydown', { key });
+  fire(keys, 'keydown', { key: 'd', ctrlKey: true });
+  pointer('up', 220, 150);
+  fire(keys, 'keydown', { key: 'd' });
+  expect(log).toEqual([
+    'dragStart staged-carton', 'move 120,100',
+    'nudge up', 'nudge up', 'nudge left', 'nudge down', 'nudge right', 'nudge up', 'nudge left', 'nudge down', 'nudge right',
+    'drop',
+  ]);
+});
+
 it('rotates on the wheel while dragging, once per burst of trackpad events; otherwise the wheel zooms', () => {
   expect(fire(element, 'wheel', { deltaY: 100 }).cancelBubble).toBe(false);
   pointer('down', 200, 150);
@@ -181,6 +200,7 @@ it('calls handlers as methods, so a class instance keeps `this`', () => {
     cancel() { this.calls.push('cancel'); }
     rotate() { this.calls.push('rotate'); }
     flip() { this.calls.push('flip'); }
+    nudge() { this.calls.push('nudge'); }
   }
   manager.dispose();
   const recorder = new Recorder();
@@ -189,8 +209,9 @@ it('calls handlers as methods, so a class instance keeps `this`', () => {
   pointer('move', 220, 150);
   fire(keys, 'keydown', { key: 'r' });
   fire(keys, 'keydown', { key: 'f' });
+  fire(keys, 'keydown', { key: 'ArrowUp' });
   pointer('up', 220, 150);
-  expect(recorder.calls).toEqual(['dragStart', 'move', 'rotate', 'flip', 'drop']);
+  expect(recorder.calls).toEqual(['dragStart', 'move', 'rotate', 'flip', 'nudge', 'drop']);
 });
 
 it('leaves right- and middle-button presses on a case to the camera (pan)', () => {

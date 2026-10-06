@@ -14,7 +14,12 @@
     "test:rust": "cargo test --manifest-path crates/pallet_sim/Cargo.toml",
     "test:unit": "vitest run src",
     "test:browser": "playwright test",
-    "test": "npm run test:rust && npm run build:wasm && npm run test:wasm && npm run test:unit && npm run test:browser"
+    "test": "npm run test:rust && npm run build:wasm && npm run test:wasm && npm run test:unit && npm run test:browser",
+    "test:bench": "cargo bench --manifest-path crates/pallet_sim/Cargo.toml",
+    "test:e2e": "npm run build:wasm && node tests/e2e/touch_test.js",
+    "test:perf": "npm run build:wasm && node tests/e2e/perf_test.js",
+    "test:compat": "playwright test -c playwright.compat.config.ts",
+    "test:all": "npm test && npm run test:bench && npm run test:e2e && npm run test:perf && npm run test:compat"
   },
   "dependencies": {
     "idb": "^8.0.3",
