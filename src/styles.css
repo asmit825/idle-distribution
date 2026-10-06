@@ -1,0 +1,38 @@
+* { box-sizing: border-box; }
+:root { font-family: Inter, ui-sans-serif, system-ui, sans-serif; color: #e7eef4; background: #101720; font-synthesis: none; }
+body { margin: 0; }
+.workstation { height: 100dvh; min-height: 320px; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 28px; border-bottom: 1px solid #ffffff12; }
+.brand { display: flex; align-items: center; gap: 14px; }
+.brand > svg { color: #dfa855; }
+.eyebrow { font-size: 10px; letter-spacing: .18em; font-weight: 650; color: #8fa2b3; }
+h1 { font-size: 20px; font-weight: 550; margin: 3px 0 0; letter-spacing: -.03em; }
+.engine-status { display: flex; align-items: center; gap: 8px; font: 11px ui-monospace, monospace; color: #a4c4b5; }
+.engine-status i { width: 6px; height: 6px; border-radius: 50%; background: #66d499; }
+.viewport { position: relative; min-height: 0; overflow: hidden; }
+.canvas-host { width: 100%; height: 100%; }
+canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.viewport-label { position: absolute; top: 26px; left: 28px; pointer-events: none; }
+h2 { font-size: 24px; font-weight: 450; margin: 8px 0; letter-spacing: -.03em; }
+.viewport-label p { font-size: 12px; color: #9caebc; margin: 0; }
+.dimensions { position: absolute; right: 28px; bottom: 26px; display: grid; gap: 5px; text-align: right; pointer-events: none; }
+.dimensions strong { font: 20px ui-monospace, monospace; color: #d5b989; }
+.dimensions span { font-size: 8px; letter-spacing: .15em; color: #8fa2b3; }
+footer { display: flex; justify-content: space-between; gap: 12px; padding: 16px 28px; font-size: 11px; color: #8fa2b3; border-top: 1px solid #ffffff12; }
+footer span:first-child { display: flex; gap: 8px; align-items: center; }
+.startup { padding: 28px; color: #c3d0dc; }
+@media (max-width: 650px) {
+  .header { padding: 16px; flex-wrap: wrap; gap: 12px; }
+  .engine-status { font-size: 10px; }
+  .viewport-label { top: 20px; left: 16px; }
+  h2 { font-size: 20px; }
+  .dimensions { right: 16px; bottom: 18px; }
+  footer { padding: 12px 16px; font-size: 10px; }
+  footer span:last-child { display: none; }
+}
+@media (max-height: 500px) {
+  .header { padding: 10px 18px; }
+  .viewport-label { top: 12px; left: 18px; }
+  h2 { font-size: 16px; }
+  footer { padding: 9px 18px; }
+}

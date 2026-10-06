@@ -1,0 +1,7 @@
+node_modules/
+dist/
+pkg/
+crates/pallet_sim/target/
+playwright-report/
+test-results/
+.DS_Store

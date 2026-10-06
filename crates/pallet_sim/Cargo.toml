@@ -1,0 +1,19 @@
+[package]
+name = "pallet_sim"
+version = "1.0.0"
+edition = "2021"
+description = "Main-thread simulation engine for Idle Distribution"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+wasm-bindgen = "0.2"
+serde = { version = "1", features = ["derive"] }
+serde-wasm-bindgen = "0.6"
+rand_chacha = "0.3"
+
+[profile.release]
+opt-level = "s"
+lto = true
