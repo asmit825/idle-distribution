@@ -6,6 +6,7 @@ import { App } from './App';
 import { seedFromUrl } from './hooks/useMode1GameLoop';
 import './styles.css';
 import './styles/hud.css';
+import './styles/storage.css';
 
 const root = createRoot(document.getElementById('root')!);
 let engine: Engine | undefined;

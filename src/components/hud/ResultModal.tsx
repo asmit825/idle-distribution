@@ -1,7 +1,9 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import type { EngineSnapshot } from '../../types/engine';
 
-export function ResultModal({ snapshot: s, title, restart, exportReplay }: {
+export function ResultModal({ snapshot: s, title, restart, exportReplay, save, storageControls }: {
+  storageControls: ReactNode;
+  save: { status: 'saving' | 'saved' | 'error'; retry(): void };
   snapshot: EngineSnapshot; title: string; restart(): void; exportReplay(): void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
@@ -27,7 +29,10 @@ export function ResultModal({ snapshot: s, title, restart, exportReplay }: {
       <dt>Interlock bonus</dt><dd>+{s.interlock_bonus.toFixed(1)}%</dd>
       {conveyor && <><dt>Throughput time</dt><dd>{(conveyor.elapsed_ms / 1000).toFixed(2)}s</dd><dt>Diversions</dt><dd>{conveyor.diversions_count} / 5</dd></>}
     </dl>
+    <p role="status" aria-label="Round save status">{save.status === 'saved' ? 'Round saved on this device.' : save.status === 'saving' ? 'Saving round…' : 'Could not save this round. Your browser storage may be unavailable or full.'}</p>
+    {save.status === 'error' && <button type="button" onClick={save.retry}>Retry saving</button>}
     <div className="result-actions"><button type="button" autoFocus onClick={restart}>{shift ? 'New shift' : 'New conveyor run'}</button>
       <button type="button" onClick={exportReplay}>Export replay</button></div>
+    {storageControls}
   </dialog>;
 }

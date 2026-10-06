@@ -1,0 +1,46 @@
+.storage-modal { position: fixed; margin: auto; width: min(1060px,calc(100% - 24px)); max-height: calc(100dvh - 24px); overflow-y: auto; padding: 22px; color: #e7eef4; }
+.storage-modal::backdrop { background: #050c16b8; backdrop-filter: blur(4px); }
+.storage-heading { display: flex; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 18px; }
+.storage-heading h2 { margin: 6px 0 0; }
+.storage-modal button { min-height: 48px; }
+.storage-controls { display: flex; gap: 6px; flex-wrap: wrap; }
+.hud-command .storage-controls { margin-left: auto; }
+.result-modal .storage-controls { margin-top: 12px; }
+.personal-bests { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px; }
+.personal-bests section { background: #142334; border: 1px solid #33465b; padding: 14px; border-radius: 8px; }
+.personal-bests h3 { margin: 0 0 8px; font-size: 14px; color: #76d3dc; }
+.gallery-layout { display: grid; grid-template-columns: 225px minmax(0,1fr); gap: 18px; }
+.round-list { display: flex; flex-direction: column; gap: 8px; max-height: 500px; overflow-y: auto; }
+.round-list button { text-align: left; display: grid; gap: 8px; font-size: 12px; }
+.round-list button[aria-pressed=true] { border-color: #76d3dc; background: #234050; }
+.round-list span { color: #acbdcc; font-size: 11px; }
+.saved-build { min-width: 0; font-size: 12px; }
+.gallery-canvas { height: 300px; width: 100%; overflow: hidden; border-radius: 8px; }
+.gallery-canvas canvas { display: block; touch-action: none; }
+.gallery-orbit { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.gallery-orbit span { margin-right: auto; color: #acbdcc; font-size: 11px; }
+.coordinate-scroll { overflow-x: auto; max-height: 180px; }
+.coordinate-scroll table { width: 100%; border-collapse: collapse; font-size: 11px; }
+.coordinate-scroll th, .coordinate-scroll td { text-align: left; padding: 9px 5px; border-bottom: 1px solid #33465b; }
+.storage-note { color: #acbdcc; font-size: 11px; line-height: 1.6; margin: 18px 0 0; }
+.gallery-empty { text-align: center; padding: 40px 16px; }
+@media (max-width:700px) {
+  .storage-modal { padding: 14px; }
+  .storage-heading { align-items: start; gap: 8px; }
+  .storage-heading h2 { font-size: 22px; }
+  .personal-bests { gap: 6px; }
+  .personal-bests section { padding: 8px; }
+  .personal-bests .metric-list { grid-template-columns: 1fr; gap: 4px; }
+  .personal-bests .metric-list dd { text-align: left; margin-bottom: 5px; }
+  .gallery-layout { grid-template-columns: minmax(0,1fr); }
+  .round-list { max-height: 140px; }
+  .gallery-canvas { height: 240px; }
+}
+
+.data-modal { width: min(620px,calc(100% - 24px)); font-size: 13px; line-height: 1.6; }
+.data-actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.import-file { display: grid; gap: 8px; width: 100%; }
+.import-file input { max-width: 100%; min-height: 48px; }
+.data-reset { margin-top: 24px; padding-top: 20px; border-top: 1px solid #455164; }
+.data-reset button { border-color: #b66b55; }
+.data-modal [role=alert] { color: #ffb6a0; }

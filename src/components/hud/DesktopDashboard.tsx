@@ -63,9 +63,9 @@ export function ShipButton({ round }: { round: RoundHud }) {
   return <button type="button" className="ship" disabled={!round.canShip} onClick={round.ship}>Ship pallet</button>;
 }
 
-export function DesktopDashboard({ round, snapshot, bays, active, actions, cameras, message, compact, mobileMenu }: {
+export function DesktopDashboard({ round, snapshot, bays, active, actions, cameras, message, compact, mobileMenu, storageControls }: {
   round: RoundHud; snapshot: EngineSnapshot; bays: readonly StagingBay[]; active?: ActiveCase; actions: CaseActions;
-  cameras: ReactNode; message: string; compact: boolean; mobileMenu?: ReactNode;
+  cameras: ReactNode; message: string; compact: boolean; mobileMenu?: ReactNode; storageControls: ReactNode;
 }) {
   return <>
     <header className="hud-command hud-panel">
@@ -73,7 +73,7 @@ export function DesktopDashboard({ round, snapshot, bays, active, actions, camer
       {round.modeSwitch}
       <div className={`shift-clock ${round.complete ? 'complete' : 'running'}`} id="timer" role="timer" aria-label={round.timerLabel}>{round.clock}</div>
       {compact ? <><span className="mobile-grade">{displayGrade(snapshot)} · {snapshot.composite_score} pts</span>{mobileMenu}</> : cameras}
-      {!compact && round.sound}<span role="status" className="engine-status">{round.handshake}</span>
+      {!compact && storageControls}{!compact && round.sound}<span role="status" className="engine-status">{round.handshake}</span>
     </header>
     {!compact && <><WarehouseFeed round={round} bays={bays} /><QualityPanel snapshot={snapshot} />
       <section className="hud-panel hud-bottom" aria-label="Active case inspector"><CaseInspector active={active} />

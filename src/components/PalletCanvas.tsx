@@ -4,6 +4,9 @@ import {
   Mesh, MeshStandardMaterial, PCFSoftShadowMap, PerspectiveCamera,
   PlaneGeometry, Scene, Vector3, WebGLRenderer,
 } from 'three';
+import { useRoundAutoSave } from '../hooks/useRoundAutoSave';
+import { DataPortabilityModal } from './settings/DataPortabilityModal';
+import { PalletGalleryModal } from './gallery/PalletGalleryModal';
 import { ResultModal } from './hud/ResultModal';
 import { MobileHud, type WarehouseTheme } from './hud/MobileHud';
 import { COMPACT_QUERY, useCompact } from './hud/useCompact';
@@ -57,7 +60,11 @@ export interface PalletCanvasProps {
 
 export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPlaced, conveyor, hud }: PalletCanvasProps) {
   const compact = useCompact();
+  const save = useRoundAutoSave(hud.result);
+  const [galleryOpen, setGalleryOpen] = useState(false);
+  const [dataOpen, setDataOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const storageControls = <div className="storage-controls"><button type="button" onClick={() => { setMenuOpen(false); setGalleryOpen(true); }}>Pallet gallery</button><button type="button" onClick={() => { setMenuOpen(false); setDataOpen(true); }}>Saved data</button></div>;
   const [theme, setTheme] = useState<WarehouseTheme>('industrial');
   const sceneStyle = useRef<{ scene: Scene; floor: MeshStandardMaterial }>();
   const host = useRef<HTMLDivElement>(null);
@@ -297,9 +304,11 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
           );
         })}
       </div>
-      <DesktopDashboard round={hud} snapshot={snapshot} bays={available} active={active} compact={compact} message={message}
+      {dataOpen && <DataPortabilityModal close={() => setDataOpen(false)} />}
+      {galleryOpen && <PalletGalleryModal close={() => setGalleryOpen(false)} />}
+      <DesktopDashboard storageControls={storageControls} round={hud} snapshot={snapshot} bays={available} active={active} compact={compact} message={message}
         actions={actions} cameras={cameras} mobileMenu={<button type="button" className="mobile-menu" aria-label="Open warehouse menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>☰</button>} />
-      {hud.result && <ResultModal snapshot={hud.result} title={hud.resultTitle} restart={hud.restart} exportReplay={() => {
+      {hud.result && <ResultModal storageControls={storageControls} save={save} snapshot={hud.result} title={hud.resultTitle} restart={hud.restart} exportReplay={() => {
         const result = hud.result!;
         const seed = result.mode1?.seed ?? result.mode2!.seed;
         const blob = new Blob([JSON.stringify({ version: 1, mode: hud.mode, seed, actions: replayActions.current, result }, null, 2)], { type: 'application/json' });
@@ -307,7 +316,7 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
         const link = document.createElement('a'); link.href = url; link.download = `pallet-mode${hud.mode}-${seed}.json`; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       }} />}
-      {compact && <MobileHud round={hud} snapshot={snapshot} bays={available} active={active} actions={actions} cameras={cameras}
+      {compact && <MobileHud storageControls={storageControls} round={hud} snapshot={snapshot} bays={available} active={active} actions={actions} cameras={cameras}
         message={message} menuOpen={menuOpen} closeMenu={() => setMenuOpen(false)} theme={theme} setTheme={setTheme} />}
     </>
   );

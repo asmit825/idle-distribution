@@ -25,9 +25,9 @@ function RepeatButton({ label, children, disabled, step }: { label: string; chil
     onClick={event => { if (event.detail === 0) latest.current(); }}>{children}</button>;
 }
 
-export function MobileHud({ round, snapshot, bays, active, actions, cameras, message, menuOpen, closeMenu, theme, setTheme }: {
+export function MobileHud({ round, snapshot, bays, active, actions, cameras, message, menuOpen, closeMenu, theme, setTheme, storageControls }: {
   round: RoundHud; snapshot: EngineSnapshot; bays: readonly StagingBay[]; active?: ActiveCase; actions: CaseActions;
-  cameras: ReactNode; message: string; menuOpen: boolean; closeMenu(): void; theme: WarehouseTheme; setTheme(theme: WarehouseTheme): void;
+  storageControls: ReactNode; cameras: ReactNode; message: string; menuOpen: boolean; closeMenu(): void; theme: WarehouseTheme; setTheme(theme: WarehouseTheme): void;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -51,6 +51,7 @@ export function MobileHud({ round, snapshot, bays, active, actions, cameras, mes
       <label className="theme-picker">Warehouse theme<select value={theme} onChange={event => setTheme(event.target.value as WarehouseTheme)}>
         <option value="industrial">Industrial Dock</option><option value="studio">Modern Studio</option><option value="blueprint">CAD Blueprint</option>
       </select></label>
+      {storageControls}
       {round.sound}
       <details><summary>Instructions</summary><p>Tap a waiting carton to pick it. Use the arrows to move in 2-inch steps relative to your camera; hold to repeat. Rotate or flip, then Done to place. Remove returns a held carton or removes an exposed placed carton. You can also drag directly.</p></details>
       <div className="drawer-metrics"><WarehouseFeed round={round} bays={bays} /><QualityPanel snapshot={snapshot} /></div>

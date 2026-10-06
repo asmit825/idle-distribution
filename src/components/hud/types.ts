@@ -36,4 +36,5 @@ export interface CaseActions {
   nudge(direction: 'up' | 'down' | 'left' | 'right'): void;
 }
 /** Ticket 07's display label for the engine's S tier; scoring stays authoritative in Rust. */
-export const displayGrade = (snapshot: EngineSnapshot) => snapshot.grade === 'S' ? 'A+' : snapshot.grade;
+export const gradeLabel = (grade: EngineSnapshot['grade']) => grade === 'S' ? 'A+' : grade;
+export const displayGrade = (snapshot: EngineSnapshot) => gradeLabel(snapshot.grade);
