@@ -5,6 +5,7 @@ import wasmUrl from '../pkg/pallet_sim_bg.wasm?url';
 import { App } from './App';
 import { seedFromUrl } from './hooks/useMode1GameLoop';
 import './styles.css';
+import './styles/hud.css';
 
 const root = createRoot(document.getElementById('root')!);
 let engine: Engine | undefined;

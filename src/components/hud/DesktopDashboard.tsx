@@ -1,0 +1,83 @@
+import type { ReactNode } from 'react';
+import { orientedSize } from '../../scene/coordinates';
+import type { StagingBay } from '../../scene/staging';
+import { SKU_CATALOG } from '../../types/catalog';
+import type { EngineSnapshot } from '../../types/engine';
+import { CogRadar } from './CogRadar';
+import { displayGrade, type ActiveCase, type CaseActions, type RoundHud } from './types';
+
+export function QualityPanel({ snapshot: s }: { snapshot: EngineSnapshot }) {
+  return <section className="hud-panel load-quality" aria-label="Pallet load quality">
+    <span className="eyebrow">PALLET LOAD QUALITY</span>
+    <div className="grade-summary"><strong id="gradeVal">{displayGrade(s)}</strong><span><b id="scoreVal">{s.composite_score}</b> pts</span></div>
+    <dl className="metric-list">
+      <dt>Volume utilization</dt><dd id="volVal">{s.volume_utilization_pct.toFixed(1)}%</dd>
+      <dt>Stability / quality</dt><dd id="stabVal">{s.quality_pct.toFixed(1)}%</dd>
+      <dt>Height</dt><dd aria-label="Pallet height">{s.max_height_inches}″ / 60″</dd>
+    </dl>
+    <meter aria-label="Height to target" value={s.max_height_inches} max={60} />
+    <dl className="metric-list"><dt>Cases placed</dt><dd>{s.cases_placed}</dd><dt>Total weight</dt><dd>{s.total_weight_lbs} lbs</dd>
+      <dt>Crushed boxes</dt><dd>{s.crushed_count}</dd><dt>Max overhang</dt><dd>{s.max_overhang_inches.toFixed(1)}″</dd></dl>
+    <span className="eyebrow">COG DRIFT RADAR</span>
+    <CogRadar x={s.cog_inches[0]} y={s.cog_inches[1]} drift={s.cog_drift_inches} />
+  </section>;
+}
+
+export function WarehouseFeed({ round, bays }: { round: RoundHud; bays: readonly StagingBay[] }) {
+  const status = round.conveyor;
+  return <section className="hud-panel warehouse-feed" aria-label="Warehouse feed">
+    <div className="viewport-label"><span className="eyebrow">{round.mode === 1 ? 'MODE 1 · FREE STAGING' : 'MODE 2 · CONVEYOR FLOW'}</span>
+      <h2>{round.heading}</h2><p>{round.description}</p></div>
+    {status ? <div className={`conveyor-telemetry ${status.signal} ${round.complete ? 'stopped' : ''}`}>
+      <span className="signal" aria-label="Line status">{status.end_reason === 'estop' ? 'Estop' : { green: 'Normal', yellow: 'Bottleneck', red: 'Saturated' }[status.signal]}</span>
+      <meter aria-label="Queue saturation" value={status.queue.length} max={10} />
+      <dl className="metric-list"><dt>Buffer</dt><dd aria-label="Conveyor queue">{status.queue.length} / 10</dd>
+        <dt>Diversions</dt><dd aria-label="Diversions">{status.diversions_count} / 5</dd>
+        <dt>Arrival</dt><dd aria-label="Arrival interval">{(status.arrival_interval_ms / 1000).toFixed(1)}s / case</dd></dl>
+      <p>Five diversions trigger an emergency stop.</p></div>
+      : <dl className="inventory-list">{SKU_CATALOG.map(sku => <div key={sku.id}><dt>{sku.name}<small>{sku.length_in}″ × {sku.width_in}″</small></dt>
+        <dd aria-label={`${sku.name} remaining`}>{bays.filter(bay => bay.sku.id === sku.id).length}</dd></div>)}</dl>}
+    <p className="hud-hint">{round.mode === 1 ? 'The 60-second shift starts with your first pick. No heavy cases on light ones.' : 'Pick the oldest carton. Reach 60 inches, then ship.'}</p>
+  </section>;
+}
+
+export function CaseInspector({ active }: { active?: ActiveCase }) {
+  if (!active) return <div className="case-inspector"><span className="eyebrow">ACTIVE CASE INSPECTOR</span><p>Tap a carton to inspect it. Drag to place.</p></div>;
+  const { sku, orientation, grid, verdict } = active;
+  const size = orientedSize(sku, orientation);
+  return <div className="case-inspector"><span className="eyebrow">{active.holding ? 'HOLDING' : 'SELECTED'} · {sku.id}</span><strong>{sku.name}</strong>
+    <p>{sku.length_in}″ × {sku.width_in}″ × {sku.height_in}″ · {sku.weight_lbs} lbs · Capacity {sku.top_load_capacity_lbs} lbs · Tape: {sku.tape.replaceAll('_', ' ')}</p>
+    <p>Footprint {size.x}″ × {size.y}″ · {orientation.yaw}° yaw{orientation.flipped ? ' · flipped' : ''}{grid ? ` · Grid ${grid[0]}, ${grid[1]} · ${verdict}` : ''}</p></div>;
+}
+
+export function ActionButtons({ active, actions, locked }: { active?: ActiveCase; actions: CaseActions; locked: boolean }) {
+  return <div className="thumb-actions">
+    <button type="button" disabled={!active?.holding || locked} onClick={actions.rotate}>Rotate</button>
+    <button type="button" disabled={!active?.holding || locked} onClick={actions.flip}>Flip</button>
+    <button type="button" disabled={!active?.removable || locked} onClick={actions.remove}>Remove</button>
+    <button type="button" disabled={!active?.holding || locked} onClick={actions.done}>Done</button>
+  </div>;
+}
+
+export function ShipButton({ round }: { round: RoundHud }) {
+  return <button type="button" className="ship" disabled={!round.canShip} onClick={round.ship}>Ship pallet</button>;
+}
+
+export function DesktopDashboard({ round, snapshot, bays, active, actions, cameras, message, compact, mobileMenu }: {
+  round: RoundHud; snapshot: EngineSnapshot; bays: readonly StagingBay[]; active?: ActiveCase; actions: CaseActions;
+  cameras: ReactNode; message: string; compact: boolean; mobileMenu?: ReactNode;
+}) {
+  return <>
+    <header className="hud-command hud-panel">
+      <div className="hud-brand"><span className="eyebrow">IDLE DISTRIBUTION</span><strong>Warehouse console</strong></div>
+      {round.modeSwitch}
+      <div className={`shift-clock ${round.complete ? 'complete' : 'running'}`} id="timer" role="timer" aria-label={round.timerLabel}>{round.clock}</div>
+      {compact ? <><span className="mobile-grade">{displayGrade(snapshot)} · {snapshot.composite_score} pts</span>{mobileMenu}</> : cameras}
+      {!compact && round.sound}<span role="status" className="engine-status">{round.handshake}</span>
+    </header>
+    {!compact && <><WarehouseFeed round={round} bays={bays} /><QualityPanel snapshot={snapshot} />
+      <section className="hud-panel hud-bottom" aria-label="Active case inspector"><CaseInspector active={active} />
+        <ActionButtons active={active} actions={actions} locked={round.complete} /><ShipButton round={round} />
+        <p className="placement-status" aria-live="polite">{message}</p></section></>}
+  </>;
+}

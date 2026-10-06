@@ -90,8 +90,8 @@ The 8-SKU catalog (SPEC-01 §2.2) lives in `crates/pallet_sim/src/sku.rs` and is
 
 - `validate_placement(sku_id, grid_x, grid_y, rot_z, flipped)` → `{ status: 'valid' | 'warning' | 'invalid', rejection, elevation_in, overhang_in, unsupported_fraction, would_crush }`. It does not change the pallet.
 - `commit_placement(...)` → snapshot, or throws `placement rejected: <reason>`.
-- `remove_placement(case_id)` → snapshot. It throws while another case rests on that one, and during a shift.
-- `get_snapshot()` → `{ cases_placed, total_weight_lbs, max_height_inches, volume_utilization_pct, max_overhang_inches, cog_inches, cog_drift_inches, crushed_count, quality_pct, composite_score, grade, placed_cases: [{ id, sku_id, grid_x, grid_y, elevation_z, rotation_yaw, flipped, crushed, weight_lbs, load_lbs }], mode1, mode2 }`, with the active mode status populated and the other `null`.
+- `remove_placement(case_id, now_ms?)` → snapshot. It rejects supporting cases and completed rounds. Mode 1 restores the original floor case; Mode 2 discards the carton without re-entering its FIFO. Pass the current monotonic time during a round.
+- `get_snapshot()` → `{ cases_placed, total_weight_lbs, max_height_inches, volume_utilization_pct, max_overhang_inches, cog_inches, cog_drift_inches, crushed_count, quality_pct, crush_penalty, overhang_penalty, drift_penalty, interlock_bonus, composite_score, grade, placed_cases: [{ id, sku_id, grid_x, grid_y, elevation_z, rotation_yaw, flipped, crushed, weight_lbs, load_lbs }], mode1, mode2 }`, with the active mode status populated and the other `null`.
 
 **Placement**
 - `grid_x`/`grid_y` give the case's min-corner cell; −1 allows a 2" overhang.
@@ -149,3 +149,18 @@ At 60 inches **Ship pallet** becomes available. The line continues until clicked
 `start_mode2(seed, now_ms)` returns a full snapshot; `tick_mode2(now_ms)` returns authoritative `mode2` telemetry. Shared `pick_case`, `commit_placement`, and `ship` dispatch to the active mode. `tick` remains Mode 1-only. `src/hooks/useMode2GameLoop.ts` drives Rust every frame and publishes HUD updates at 10 Hz; `src/rendering/ConveyorBelt.tsx` reads the live telemetry for roller, incoming-carton, and diversion animation. Framing includes the complete conveyor footprint on desktop and phone layouts.
 
 Ticket 06 tests cover Rust timing/overflow/FIFO/shipping, compiled Wasm integration, and browser mode switching, saturation/Estop, mid-drag arrivals, and shipping a 60-inch pallet.
+
+
+### Warehouse dashboard and mobile controls (ticket 07)
+
+The desktop console has a command bar, SKU inventory or conveyor feed, live load-quality/COG pane, and case inspector with dispatch controls. The HUD renders the Rust score and penalties directly. The dashboard labels the engine's S tier **A+**; the final report and exported data retain **S**, matching the detailed scoring contract. Stability displays the existing load-quality percentage rather than introducing a separate scoring formula.
+
+Compact mode activates at width ≤900px, height ≤540px, or a coarse pointer. React feeds both layouts from the same snapshot and placement controller; there is no copied game logic or DOM polling. The actual canvas occupies the space between the controls, and the existing `frameCompactCamera` reframes that clear viewport on resize. Landscape puts the control deck beside the canvas.
+
+On mobile, tap a waiting carton to pick it at the pallet center. Each D-Pad press moves one 2-inch grid cell along the pallet axis closest to the camera's screen direction. Hold for repeated steps; release, cancellation, lost capture, blur, or a completed round stops repetition. Rotate/Flip update the ghost and footprint; Done commits a valid placement; Remove returns a held carton or removes a selected exposed placed carton. Supporting cartons cannot be removed, and round-end rules remain authoritative in Rust. Drag-and-drop still works.
+
+The menu contains camera presets, Industrial Dock / Modern Studio / CAD Blueprint themes, instructions, telemetry, sound controls in Mode 2, and a confirmed reset of the current run and theme. Saved-session storage and its reset remain ticket 08's responsibility.
+
+Round completion opens a focus-contained glass dialog with the grade, score, volume, weight, height, and exact Rust penalty/bonus breakdown. Export replay downloads versioned JSON containing mode, seed, timed pick/place/remove actions and the final snapshot. Replay playback and historical storage are not part of this ticket.
+
+Browser tests run serially, with an isolated Vite cache and file watching disabled, so external cloud-sync events cannot reload the page mid-gesture. HUD tests cover live inspection and removal metrics, coarse-pointer activation, portrait/landscape thumb controls, repeat cancellation, results and export. Controller tests use the compiled Wasm engine for camera-relative movement, inventory restoration, support protection and Estop lockout.

@@ -116,7 +116,10 @@ test('Mode 1 picks, places, rejects heavy-on-light, and ships through the engine
     });
     assert.equal(engine.commit_placement('SKU-LT', 0, 0, 0, false).mode1.cases_on_floor, 99);
     assert.throws(() => engine.pick_case(light.id, 21_000), /not on the floor/);
-    assert.throws(() => engine.remove_placement(0), /shift/);
+    // Ticket 07 allows an exposed carton to return to its original floor slot.
+    assert.equal(engine.remove_placement(0, 21_000).mode1.cases_on_floor, 100);
+    engine.pick_case(light.id, 21_000);
+    engine.commit_placement('SKU-LT', 0, 0, 0, false);
 
     engine.pick_case(heavy.id, 21_000);
     assert.deepEqual(engine.validate_placement('SKU-HC', 0, 0, 0, false), {
@@ -129,6 +132,7 @@ test('Mode 1 picks, places, rejects heavy-on-light, and ships through the engine
       seed: '42', phase: 'complete', time_remaining_ms: 40_000, cases_on_floor: 99,
       end_reason: 'shipped', early_finish_bonus: 0, final_score: 80,
     });
+    assert.throws(() => engine.remove_placement(1, 31_000), /shift is over/);
     assert.equal(shipped.composite_score, 80); // one case, 20% center-of-gravity drift
     assert.throws(() => engine.pick_case(heavy.id, 31_000), /shift is over/);
 

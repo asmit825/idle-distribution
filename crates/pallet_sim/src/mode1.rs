@@ -5,7 +5,7 @@ use rand_chacha::ChaCha8Rng;
 use serde::Serialize;
 
 use crate::grid::{Placement, Rejection, Status, Validation};
-use crate::physics::{CaseId, Pallet};
+use crate::physics::{CaseId, Pallet, RemoveError};
 use crate::scoring::{self, Score};
 use crate::sku::{self, HandlingClass, SkuDef};
 
@@ -83,6 +83,7 @@ pub struct Shift {
     on_floor: Vec<bool>,
     pallet: Pallet,
     held: Option<u32>,
+    placed_sources: Vec<(CaseId, u32)>,
     /// The latest timestamp seen, in the caller's milliseconds (`performance.now()`).
     now_ms: f64,
     started_ms: Option<f64>,
@@ -103,6 +104,7 @@ impl Shift {
             floor,
             pallet: Pallet::default(),
             held: None,
+            placed_sources: Vec::new(),
             now_ms: f64::NEG_INFINITY,
             started_ms: None,
             remaining_ms: SHIFT_MS,
@@ -200,12 +202,27 @@ impl Shift {
             .pallet
             .commit(placement)
             .map_err(ShiftError::Rejected)?;
+        self.placed_sources.push((case, id));
         self.on_floor[id as usize] = false;
         self.held = None;
         if self.cases_on_floor() == 0 {
             self.finish(EndReason::AllPlaced);
         }
         Ok(case)
+    }
+
+    /// Returns an exposed carton to its original floor slot. The engine checks the clock first.
+    pub fn remove(&mut self, case_id: CaseId) -> Result<(), RemoveError> {
+        self.pallet.remove(case_id)?;
+        if let Some(index) = self
+            .placed_sources
+            .iter()
+            .position(|(id, _)| *id == case_id)
+        {
+            let (_, floor_id) = self.placed_sources.remove(index);
+            self.on_floor[floor_id as usize] = true;
+        }
+        Ok(())
     }
 
     /// Ships the pallet as it stands, ending the shift.

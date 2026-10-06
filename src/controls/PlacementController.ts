@@ -16,7 +16,8 @@ export type PlacementEvent =
   | { type: 'pick'; sku: SkuDef; bay: StagingBay }
   | { type: 'placed'; sku: SkuDef; placed: PlacedCase; snapshot: EngineSnapshot }
   | { type: 'returned'; sku: SkuDef; rejection: Rejection | null }
-  | { type: 'select'; target?: PlacementTarget };
+  | { type: 'select'; target?: PlacementTarget }
+  | { type: 'removed'; id: number; snapshot: EngineSnapshot };
 
 export interface Aim {
   gridX: number;
@@ -51,6 +52,7 @@ export interface PlacementControllerOptions {
   /** Asked before a held case lands in a valid spot; false returns it to the floor. */
   canDrop?: () => boolean;
   onEvent?: (event: PlacementEvent) => void;
+  onPreview?: () => void;
 }
 
 const DECK_PLANE = new Plane(new Vector3(0, 1, 0), -DECK_Y);
@@ -86,6 +88,8 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
   /** Ids of bays whose case is on the pallet and that do not refill. */
   private readonly emptied = new Set<number>();
   private locked = false;
+  private allBays: readonly StagingBay[] = [];
+  private readonly placedSources = new Map<number, number>();
   private selection?: PlacementTarget;
   /** Scene volumes of the placed cases, rebuilt with each snapshot. */
   private placedBoxes: { id: number; box: Box3 }[] = [];
@@ -107,6 +111,7 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
 
   /** Re-stages the floor, for example after an orientation change. Cancels any drag. */
   setBays(bays: readonly StagingBay[]) {
+    this.allBays = bays;
     this.cancel();
     if (this.selection?.kind === 'bay') this.tap(undefined);
     this.removeBayCartons();
@@ -187,6 +192,34 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
     if (!center) return;
     const gridX = Math.round((center.x - size.x / 2) / CELL_IN);
     const gridY = Math.round((center.y - size.y / 2) / CELL_IN);
+    this.aimAt(gridX, gridY);
+  }
+
+  /** Starts a tap-selected case at the deck center, leaving the finger free for the HUD. */
+  pickSelected() {
+    if (this.heldCase || this.selection?.kind !== 'bay') return;
+    this.dragStart(this.selection);
+    const held = this.heldCase as HeldCase | undefined;
+    if (!held) return;
+    const size = orientedSize(held.bay.sku, held.orientation);
+    this.aimAt(Math.round((48 - size.x) / 4), Math.round((40 - size.y) / 4));
+  }
+
+  /** One 2-inch grid step along the closest screen-relative pallet axis. */
+  nudge(direction: 'up' | 'down' | 'left' | 'right') {
+    const held = this.heldCase;
+    if (!held?.aim || this.locked) return;
+    const right = new Vector3().setFromMatrixColumn(this.options.camera.matrixWorld, 0);
+    const x = Math.abs(right.x) >= Math.abs(right.z) ? Math.sign(right.x) : 0;
+    const y = x ? 0 : Math.sign(right.z);
+    const [dx, dy] = direction === 'right' ? [x, y] : direction === 'left' ? [-x, -y]
+      : direction === 'up' ? [y, -x] : [-y, x];
+    held.point = undefined;
+    this.aimAt(held.aim.gridX + dx, held.aim.gridY + dy);
+  }
+
+  private aimAt(gridX: number, gridY: number) {
+    const held = this.heldCase!;
     const { sku } = held.bay;
     const { yaw, flipped } = held.orientation;
     let validation: Validation;
@@ -202,6 +235,7 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
     const carton = this.heldCarton!;
     landing.getCenter(carton.position).setY(landing.max.y + HOVER_IN);
     carton.visible = true;
+    this.options.onPreview?.();
   }
 
   /** Commits the held case if its aim is valid or a warning; otherwise it returns to its bay. */
@@ -216,7 +250,9 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
     }
     const { gridX, gridY } = held.aim;
     const snapshot = this.options.engine.commit_placement(sku.id, gridX, gridY, held.orientation.yaw, held.orientation.flipped);
+    this.placedSources.set(snapshot.placed_cases.at(-1)!.id, held.bay.id);
     if (this.options.refill === false) this.emptyBay(held.bay);
+    this.selection = undefined;
     this.setSnapshot(snapshot);
     this.updateOutline();
     // Ids only grow, so the new case is last.
@@ -229,7 +265,29 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
     const held = this.heldCase;
     if (!held) return;
     this.release();
+    this.selection = undefined;
+    this.updateOutline();
     this.emit({ type: 'returned', sku: held.bay.sku, rejection: null });
+  }
+
+  /** Returns a held carton, or removes the selected exposed carton through the engine. */
+  remove() {
+    if (this.locked) return;
+    if (this.heldCase) { this.cancel(); return; }
+    if (this.selection?.kind !== 'case' || this.options.canDrop?.() === false) return;
+    const id = this.selection.id;
+    const snapshot = this.options.engine.remove_placement(id, performance.now());
+    // Mode 1 returns inventory to the floor; Mode 2 discards without altering FIFO order.
+    const source = this.placedSources.get(id);
+    if (snapshot.mode1 && source !== undefined) {
+      this.emptied.delete(source);
+      this.setBays(this.allBays);
+    }
+    this.placedSources.delete(id);
+    this.selection = undefined;
+    this.setSnapshot(snapshot);
+    this.updateOutline();
+    this.emit({ type: 'removed', id, snapshot });
   }
 
   /** Turns the held case 90° clockwise, seen from above. */
@@ -301,6 +359,7 @@ export class PlacementController implements PointerHandlers<PlacementTarget> {
     held.orientation = change(held.orientation);
     this.rebuildHeldCarton();
     if (held.point) this.dragMove(held.point);
+    else if (held.aim) this.aimAt(held.aim.gridX, held.aim.gridY);
   }
 
   private updateOutline() {

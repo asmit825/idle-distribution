@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { COMPACT_QUERY } from '../components/PalletCanvas';
+import { COMPACT_QUERY } from '../components/hud/useCompact';
 import { stageFloor, type FloorLayout } from '../game/FloorStaging';
 import type { StagingBay } from '../scene/staging';
 import type { EngineSnapshot, FloorCase, ShiftEngine, ShiftStatus } from '../types/engine';

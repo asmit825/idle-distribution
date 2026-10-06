@@ -3,6 +3,7 @@ import { createCanvas } from '@napi-rs/canvas';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Box3, Color, Group, PerspectiveCamera, Vector3 } from 'three';
 import { Engine, initSync } from '../../pkg/pallet_sim';
+import { conveyorPickBay } from '../rendering/ConveyorBelt';
 import { Carton } from '../rendering/BoxMesh';
 import { disposeBoxMaterials } from '../rendering/materials';
 import { toScene } from '../scene/coordinates';
@@ -235,6 +236,7 @@ it('previews each pointer move on a full 100-case pallet in under 0.5 ms', () =>
 it('treats only an off-pallet anchor as red; other engine failures surface', () => {
   controller.dispose();
   const failing: PalletEngine = {
+    remove_placement: (id, now) => engine.remove_placement(id, now),
     get_snapshot: () => engine.get_snapshot(),
     commit_placement: () => { throw new Error('unused'); },
     validate_placement: () => { throw new Error('unknown SKU SKU-XX'); },
@@ -360,4 +362,76 @@ describe('on a Mode 1 floor', () => {
     const emptied = portrait.find(bay => bay.id === light.id)!;
     expect(controller.hitTest(screenOfCarton(emptied))?.target).not.toEqual({ kind: 'bay', bay: emptied });
   });
+});
+
+it('picks a selected carton for thumb controls and nudges one grid cell relative to the camera', () => {
+  camera.position.set(0, 80, 80);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+  controller.tap({ kind: 'bay', bay: bay('SKU-HF') });
+  controller.pickSelected();
+  expect(controller.held?.aim).toMatchObject({ gridX: 8, gridY: 4 });
+  controller.nudge('right');
+  expect(controller.held?.aim).toMatchObject({ gridX: 9, gridY: 4 });
+  controller.nudge('up');
+  expect(controller.held?.aim).toMatchObject({ gridX: 9, gridY: 3 });
+  camera.position.set(80, 80, 0);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+  controller.nudge('right');
+  expect(controller.held?.aim).toMatchObject({ gridX: 9, gridY: 2 });
+  controller.rotate();
+  expect(controller.held?.aim).toMatchObject({ gridX: 9, gridY: 2 });
+  expect(controller.drop()).toBe('placed');
+  expect(engine.get_snapshot().placed_cases[0]).toMatchObject({ grid_x: 9, grid_y: 2 });
+});
+
+it('returns a removed exposed case to the Mode 1 floor and updates the authoritative load metrics', () => {
+  controller.dispose();
+  engine.start_mode1(42n);
+  const floor = stageFloor(engine.floor_cases(), 'radial');
+  controller = new PlacementController({ engine, camera, parent: scene, viewport: () => VIEWPORT, bays: floor, refill: false,
+    pick: bay => { engine.pick_case(bay.id, 100); return true; } });
+  const target = floor.find(bay => bay.sku.id === 'SKU-MQ')!;
+  controller.dragStart({ kind: 'bay', bay: target });
+  controller.dragMove(screenOf(24, 20));
+  controller.drop();
+  const id = engine.get_snapshot().placed_cases[0].id;
+  controller.tap({ kind: 'case', id });
+  controller.remove();
+  expect(engine.get_snapshot()).toMatchObject({ cases_placed: 0, total_weight_lbs: 0, max_height_inches: 0,
+    cog_inches: [24, 20], mode1: { cases_on_floor: 100 } });
+  expect(controller.bays.some(bay => bay.id === target.id)).toBe(true);
+  controller.dragStart({ kind: 'bay', bay: target });
+  controller.dragMove(screenOf(24, 20));
+  expect(controller.drop()).toBe('placed');
+  engine.ship(200);
+  controller.tap({ kind: 'case', id: engine.get_snapshot().placed_cases[0].id });
+  expect(() => controller.remove()).toThrow(/over/);
+  expect(engine.get_snapshot().cases_placed).toBe(1);
+});
+
+
+it('removes only exposed Mode 2 cases without reordering the FIFO and refuses removal after Estop', () => {
+  controller.dispose();
+  engine.start_mode2(2149n, 0);
+  engine.tick_mode2(7000);
+  const first = conveyorPickBay(engine.get_snapshot().mode2.queue[0]);
+  controller = new PlacementController({ engine, camera, parent: scene, viewport: () => VIEWPORT, bays: [first], refill: false,
+    pick: bay => { engine.pick_case(bay.id, 7000); return true; } });
+  controller.dragStart({ kind: 'bay', bay: first });
+  controller.dragMove(screenOf(24, 20)); controller.drop();
+  const second = conveyorPickBay(engine.get_snapshot().mode2.queue[0]);
+  controller.setBays([second]);
+  controller.dragStart({ kind: 'bay', bay: second });
+  controller.dragMove(screenOf(24, 20, 15)); controller.drop();
+  const [base, top] = engine.get_snapshot().placed_cases;
+  controller.tap({ kind: 'case', id: base.id });
+  expect(() => controller.remove()).toThrow(/supporting/);
+  controller.tap({ kind: 'case', id: top.id });
+  controller.remove();
+  expect(engine.get_snapshot()).toMatchObject({ cases_placed: 1, max_height_inches: 15, mode2: { queue: [], arrival_interval_ms: 3125 } });
+  engine.tick_mode2(100000);
+  controller.tap({ kind: 'case', id: base.id });
+  expect(() => controller.remove()).toThrow(/over/);
 });

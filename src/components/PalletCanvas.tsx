@@ -4,7 +4,11 @@ import {
   Mesh, MeshStandardMaterial, PCFSoftShadowMap, PerspectiveCamera,
   PlaneGeometry, Scene, Vector3, WebGLRenderer,
 } from 'three';
-import { FlipVertical2, RotateCw } from 'lucide-react';
+import { ResultModal } from './hud/ResultModal';
+import { MobileHud, type WarehouseTheme } from './hud/MobileHud';
+import { COMPACT_QUERY, useCompact } from './hud/useCompact';
+import { DesktopDashboard } from './hud/DesktopDashboard';
+import type { ActiveCase, RoundHud } from './hud/types';
 import { PlacementController, type PlacementEvent } from '../controls/PlacementController';
 import { PointerManager } from '../controls/PointerManager';
 import { BoxMesh } from '../rendering/BoxMesh';
@@ -16,9 +20,6 @@ import { orientedSize, placedCaseBox, toScene } from '../scene/coordinates';
 import type { StagingBay } from '../scene/staging';
 import { skuById } from '../types/catalog';
 import type { ConveyorStatus, EngineSnapshot, PalletEngine, Rejection } from '../types/engine';
-
-/** SPEC-01 §7.3: phone layouts, where HUD chrome overlays the canvas. */
-export const COMPACT_QUERY = '(max-width:900px),(max-height:540px),(pointer:coarse)';
 
 const PRESETS: { name: CameraPreset; label: string }[] = [
   { name: 'iso', label: 'Iso' }, { name: 'top', label: 'Top' }, { name: 'side', label: 'Side' }, { name: 'reset', label: 'Reset' },
@@ -41,6 +42,7 @@ interface Interaction {
 
 export interface PalletCanvasProps {
   engine: PalletEngine;
+  hud: RoundHud;
   /** A floor whose bays stay empty once placed (Mode 1); the sandbox's refilling bays otherwise. */
   bays?: readonly StagingBay[];
   /** Asked as a case leaves the floor; false refuses the pick. */
@@ -53,9 +55,14 @@ export interface PalletCanvasProps {
   conveyor?: () => ConveyorStatus | undefined;
 }
 
-export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPlaced, conveyor }: PalletCanvasProps) {
+export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPlaced, conveyor, hud }: PalletCanvasProps) {
+  const compact = useCompact();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [theme, setTheme] = useState<WarehouseTheme>('industrial');
+  const sceneStyle = useRef<{ scene: Scene; floor: MeshStandardMaterial }>();
   const host = useRef<HTMLDivElement>(null);
   const interaction = useRef<Interaction>();
+  const replayActions = useRef<({ elapsed_ms: number } & ({ type: 'pick'; source_id: number } | { type: 'place'; placement: EngineSnapshot['placed_cases'][number] } | { type: 'remove'; case_id: number }))[]>([]);
   /** The latest props, for the long-lived controllers. */
   const props = useRef({ bays, pick, canDrop, onPlaced, conveyor });
   props.current = { bays, pick, canDrop, onPlaced, conveyor };
@@ -65,7 +72,19 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
   const [placedGroup, setPlacedGroup] = useState<Group>();
   const [conveyorGroup, setConveyorGroup] = useState<Group>();
   const [snapshot, setSnapshot] = useState<EngineSnapshot>(() => engine.get_snapshot());
-  const [holding, setHolding] = useState(false);
+  const [active, setActive] = useState<ActiveCase>();
+  const [available, setAvailable] = useState<readonly StagingBay[]>(bays ?? []);
+  const syncInspector = useCallback(() => {
+    const placement = interaction.current?.placement;
+    if (!placement) return;
+    const held = placement.held;
+    const selected = placement.selected;
+    const placed = selected?.kind === 'case' ? engine.get_snapshot().placed_cases.find(c => c.id === selected.id) : undefined;
+    const sku = held?.bay.sku ?? (selected?.kind === 'bay' ? selected.bay.sku : placed ? skuById(placed.sku_id) : undefined);
+    setActive(sku ? { sku, holding: !!held, removable: !!held || !!placed, orientation: held?.orientation ?? { yaw: placed?.rotation_yaw ?? (selected?.kind === 'bay' ? selected.bay.yaw : 0), flipped: placed?.flipped ?? false },
+      grid: held?.aim ? [held.aim.gridX, held.aim.gridY] : undefined, verdict: held?.aim?.validation.status } : undefined);
+    setAvailable(placement.bays);
+  }, [engine]);
   const [message, setMessage] = useState(conveyor ? 'Drag the oldest carton from the pick spur onto the pallet.' : 'Drag a carton from the floor onto the pallet.');
 
   useEffect(() => {
@@ -103,6 +122,7 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
     floor.position.y = -2.4;
     floor.receiveShadow = true;
     scene.add(floor);
+    sceneStyle.current = { scene, floor: floor.material };
     const grid = new GridHelper(240, 24, 0x354857, 0x293946);
     grid.position.y = -2.39;
     scene.add(grid);
@@ -124,11 +144,19 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
       renderBays: !props.current.conveyor,
       pick: bay => props.current.pick?.(bay) ?? true,
       canDrop: () => props.current.canDrop?.() ?? true,
+      onPreview: syncInspector,
       onEvent: event => {
+        if (event.type === 'pick' || event.type === 'placed' || event.type === 'removed') {
+          const state = engine.get_snapshot();
+          const elapsed_ms = props.current.conveyor?.()?.elapsed_ms ?? (60_000 - (state.mode1?.time_remaining_ms ?? 60_000));
+          replayActions.current.push(event.type === 'pick' ? { type: 'pick', source_id: event.bay.id, elapsed_ms }
+            : event.type === 'placed' ? { type: 'place', placement: event.placed, elapsed_ms }
+            : { type: 'remove', case_id: event.id, elapsed_ms });
+        }
         setMessage(placementMessage(event, engine));
-        if (event.type === 'pick') setHolding(true);
-        if (event.type === 'placed' || event.type === 'returned') setHolding(false);
-        if (event.type === 'placed') {
+        syncInspector();
+        if (event.type === 'select' && event.target?.kind === 'bay' && window.matchMedia(COMPACT_QUERY).matches) placement.pickSelected();
+        if (event.type === 'placed' || event.type === 'removed') {
           setSnapshot(event.snapshot);
           cameraController.setStackHeight(event.snapshot.max_height_inches);
           props.current.onPlaced?.(event.snapshot);
@@ -195,6 +223,7 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
     return () => {
       delete window.__palletTest;
       interaction.current = undefined;
+      sceneStyle.current = undefined;
       observer.disconnect();
       window.removeEventListener('resize', resize);
       compact.removeEventListener('change', resize);
@@ -228,18 +257,35 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
     if (!bays || !current || current.bays === bays) return;
     current.bays = bays;
     current.placement.setBays(bays);
+    syncInspector();
     if (!props.current.conveyor) current.camera.setFloor(bays);
-  }, [bays]);
+  }, [bays, syncInspector]);
 
   useEffect(() => {
     if (locked) interaction.current?.placement.lock();
   }, [locked]);
 
+  useEffect(() => {
+    const style = sceneStyle.current;
+    if (!style) return;
+    const colors = { industrial: ['#131c26', '#202d38'], studio: ['#b8c4ce', '#8d9da8'], blueprint: ['#071e49', '#123666'] }[theme];
+    style.scene.background = new Color(colors[0]); style.floor.color.set(colors[1]);
+  }, [theme]);
+  useEffect(() => { if (!compact || locked) setMenuOpen(false); }, [compact, locked]);
+  const actions = { rotate: () => interaction.current?.placement.rotate(), flip: () => interaction.current?.placement.flip(),
+    remove: () => {
+      try { interaction.current?.placement.remove(); }
+      catch (error) { setMessage(String(error).replace(/^Error: /, '')); }
+    }, done: () => interaction.current?.placement.drop(),
+    nudge: (direction: 'up' | 'down' | 'left' | 'right') => interaction.current?.placement.nudge(direction) };
+  const cameras = <nav className="camera-presets" aria-label="Camera views">{PRESETS.map(({ name, label }) =>
+    <button key={name} type="button" onClick={() => interaction.current?.camera.preset(name)}>{label}</button>)}</nav>;
+
   return (
     <>
       <div ref={host} className="canvas-host">
         {error && <p role="alert" className="startup">WebGL is unavailable. Enable hardware acceleration or try another browser.</p>}
-        {conveyorGroup && conveyor && <ConveyorBelt parent={conveyorGroup} readStatus={conveyor} movePick={moveConveyorPick} heldCase={heldConveyorCase} />}
+        {conveyorGroup && conveyor && <ConveyorBelt revision={hud.conveyor} parent={conveyorGroup} readStatus={conveyor} movePick={moveConveyorPick} heldCase={heldConveyorCase} />}
         {placedGroup && snapshot.placed_cases.map(placed => {
           const box = placedCaseBox(placed);
           const base = box.getCenter(new Vector3()).setY(box.min.y);
@@ -251,22 +297,25 @@ export function PalletCanvas({ engine, bays, pick, canDrop, locked = false, onPl
           );
         })}
       </div>
-      <nav className="camera-presets" aria-label="Camera views" data-chrome>
-        {PRESETS.map(({ name, label }) => (
-          <button key={name} type="button" onClick={() => interaction.current?.camera.preset(name)}>{label}</button>
-        ))}
-      </nav>
-      <div className="case-actions" data-chrome>
-        <button type="button" disabled={!holding} onClick={() => interaction.current?.placement.rotate()}><RotateCw size={16} />Rotate <kbd>R</kbd></button>
-        <button type="button" disabled={!holding} onClick={() => interaction.current?.placement.flip()}><FlipVertical2 size={16} />Flip <kbd>F</kbd></button>
-        <p className="placement-status" aria-live="polite">{message}</p>
-      </div>
+      <DesktopDashboard round={hud} snapshot={snapshot} bays={available} active={active} compact={compact} message={message}
+        actions={actions} cameras={cameras} mobileMenu={<button type="button" className="mobile-menu" aria-label="Open warehouse menu" aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}>☰</button>} />
+      {hud.result && <ResultModal snapshot={hud.result} title={hud.resultTitle} restart={hud.restart} exportReplay={() => {
+        const result = hud.result!;
+        const seed = result.mode1?.seed ?? result.mode2!.seed;
+        const blob = new Blob([JSON.stringify({ version: 1, mode: hud.mode, seed, actions: replayActions.current, result }, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a'); link.href = url; link.download = `pallet-mode${hud.mode}-${seed}.json`; link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }} />}
+      {compact && <MobileHud round={hud} snapshot={snapshot} bays={available} active={active} actions={actions} cameras={cameras}
+        message={message} menuOpen={menuOpen} closeMenu={() => setMenuOpen(false)} theme={theme} setTheme={setTheme} />}
     </>
   );
 }
 
 function placementMessage(event: PlacementEvent, engine: PalletEngine) {
   switch (event.type) {
+    case 'removed': return 'Case removed. Load quality updated.';
     case 'pick':
       return `Holding ${event.sku.name}.`;
     case 'placed': {

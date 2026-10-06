@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useLayoutEffect, useRef } from 'react';
 import {
   Box3, BoxGeometry, CanvasTexture, CylinderGeometry, Group, Mesh, MeshStandardMaterial,
   RepeatWrapping, SphereGeometry, SRGBColorSpace, Vector3, type Object3D,
@@ -28,12 +28,15 @@ export function conveyorPickBay(item: ConveyorCase) {
 }
 
 /** Mounts roller lanes, a diversion spur, and cartons driven only by Rust's conveyor snapshot. */
-export function ConveyorBelt({ parent, readStatus, movePick, heldCase }: {
+export function ConveyorBelt({ parent, readStatus, movePick, heldCase, revision }: {
   parent: Object3D;
   readStatus: () => ConveyorStatus | undefined;
   movePick: (id: number, position: Vector3) => void;
   heldCase: () => number | undefined;
+  revision?: ConveyorStatus;
 }) {
+  const flush = useRef<() => void>();
+  useLayoutEffect(() => flush.current?.(), [revision]);
   useEffect(() => {
     const group = new Group();
     group.name = 'conveyor';
@@ -102,10 +105,10 @@ export function ConveyorBelt({ parent, readStatus, movePick, heldCase }: {
       return carton;
     };
     let previousElapsed: number | undefined;
-    let frame = requestAnimationFrame(function animate() {
+    const update = () => {
       const status = readStatus();
       if (status) {
-        const seconds = previousElapsed === undefined ? 0 : Math.max(0, status.elapsed_ms - previousElapsed) / 1000;
+        const seconds = previousElapsed === undefined || status.end_reason ? 0 : Math.max(0, status.elapsed_ms - previousElapsed) / 1000;
         previousElapsed = status.elapsed_ms;
         // Elapsed time freezes at shipping or Estop, so rollers and diverted cartons freeze too.
         const turns = status.incoming.id + (status.end_reason === 'estop' ? 1 : status.arrival_progress);
@@ -135,9 +138,11 @@ export function ConveyorBelt({ parent, readStatus, movePick, heldCase }: {
           group.remove(carton); carton.dispose(); cartons.delete(id);
         }
       }
-      frame = requestAnimationFrame(animate);
-    });
+    };
+    flush.current = update;
+    let frame = requestAnimationFrame(function animate() { update(); frame = requestAnimationFrame(animate); });
     return () => {
+      flush.current = undefined;
       cancelAnimationFrame(frame);
       for (const carton of cartons.values()) { group.remove(carton); carton.dispose(); }
       const geometries = new Set<import('three').BufferGeometry>();

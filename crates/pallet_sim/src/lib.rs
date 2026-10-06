@@ -103,12 +103,30 @@ impl Engine {
         self.get_snapshot()
     }
 
-    /// Removes a case with nothing resting on it. Not during a shift.
-    pub fn remove_placement(&mut self, case_id: CaseId) -> Result<JsValue, JsError> {
-        let Mode::Sandbox(pallet) = &mut self.mode else {
-            return Err(JsError::new("cases cannot leave the pallet during a shift"));
+    /// Removes an exposed case, updating the round to the action time before changing the load.
+    pub fn remove_placement(
+        &mut self,
+        case_id: CaseId,
+        now_ms: Option<f64>,
+    ) -> Result<JsValue, JsError> {
+        let result = match &mut self.mode {
+            Mode::Sandbox(pallet) => pallet.remove(case_id),
+            Mode::Mode1(shift) => {
+                shift.tick(now_ms.unwrap_or(f64::NEG_INFINITY));
+                if shift.phase() == Phase::Complete {
+                    return Err(JsError::new("the shift is over"));
+                }
+                shift.remove(case_id)
+            }
+            Mode::Mode2(round) => {
+                round.tick(now_ms.unwrap_or(f64::NEG_INFINITY));
+                if round.status().end_reason.is_some() {
+                    return Err(JsError::new("the conveyor round is over"));
+                }
+                round.remove(case_id)
+            }
         };
-        pallet.remove(case_id).map_err(|error| match error {
+        result.map_err(|error| match error {
             RemoveError::NotFound => JsError::new(&format!("no case {case_id}")),
             RemoveError::Supporting => {
                 JsError::new(&format!("case {case_id} is supporting another case"))
@@ -258,6 +276,10 @@ struct EngineSnapshot {
     cog_drift_inches: f64,
     crushed_count: u32,
     quality_pct: f64,
+    crush_penalty: f64,
+    overhang_penalty: f64,
+    drift_penalty: f64,
+    interlock_bonus: f64,
     composite_score: u32,
     grade: Grade,
     placed_cases: Vec<PlacedCaseDto>,
@@ -332,6 +354,10 @@ impl EngineSnapshot {
             cog_drift_inches: score.cog_drift_in,
             crushed_count: score.crushed_count,
             quality_pct: score.quality_pct,
+            crush_penalty: score.crush_penalty,
+            overhang_penalty: score.overhang_penalty,
+            drift_penalty: score.drift_penalty,
+            interlock_bonus: score.interlock_bonus,
             composite_score: score.composite_score,
             grade: score.grade,
             placed_cases: cases

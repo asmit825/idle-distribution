@@ -38,6 +38,10 @@ export interface EngineSnapshot {
   cog_drift_inches: number;
   crushed_count: number;
   quality_pct: number;
+  crush_penalty: number;
+  overhang_penalty: number;
+  drift_penalty: number;
+  interlock_bonus: number;
   composite_score: number;
   grade: 'S' | 'A' | 'B' | 'C' | 'F';
   placed_cases: PlacedCase[];
@@ -78,6 +82,7 @@ export interface PalletEngine {
   /** Throws `placement rejected: <reason>` when the placement is invalid. */
   commit_placement(skuId: string, gridX: number, gridY: number, yaw: number, flipped: boolean): EngineSnapshot;
   get_snapshot(): EngineSnapshot;
+  remove_placement(caseId: number, nowMs?: number): EngineSnapshot;
 }
 
 /** The Mode 1 shift calls. Times are `performance.now()` milliseconds. */

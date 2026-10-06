@@ -6,7 +6,7 @@ use rand_chacha::ChaCha8Rng;
 use serde::Serialize;
 
 use crate::grid::{Placement, Rejection, Validation, CEILING_IN};
-use crate::physics::{CaseId, Pallet};
+use crate::physics::{CaseId, Pallet, RemoveError};
 use crate::sku;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -173,6 +173,11 @@ impl ConveyorRound {
         self.queue.pop_front();
         self.held = None;
         Ok(id)
+    }
+
+    /// Removes an exposed placed carton. It does not re-enter or reorder the incoming FIFO.
+    pub fn remove(&mut self, case_id: CaseId) -> Result<(), RemoveError> {
+        self.pallet.remove(case_id)
     }
 
     pub fn ship(&mut self, now_ms: f64) -> Result<(), ConveyorError> {
