@@ -21,18 +21,44 @@ h2 { font-size: 24px; font-weight: 450; margin: 8px 0; letter-spacing: -.03em; }
 footer { display: flex; justify-content: space-between; gap: 12px; padding: 16px 28px; font-size: 11px; color: #8fa2b3; border-top: 1px solid #ffffff12; }
 footer span:first-child { display: flex; gap: 8px; align-items: center; }
 .startup { padding: 28px; color: #c3d0dc; }
+.camera-presets { position: absolute; top: 22px; right: 24px; display: flex; gap: 6px; }
+.camera-presets button, .case-actions button {
+  display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 6px 11px;
+  font: 600 11px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .04em; color: #dce6ee;
+  background: rgba(16, 24, 38, .85); border: 1px solid #ffffff1a; border-radius: 6px; cursor: pointer;
+  backdrop-filter: blur(12px);
+}
+.camera-presets button:hover, .case-actions button:hover:not(:disabled) { border-color: hsl(190, 95%, 50%); }
+.case-actions button:disabled { opacity: .4; cursor: default; }
+.case-actions { position: absolute; left: 24px; bottom: 22px; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; max-width: calc(100% - 300px); }
+kbd { font: 10px ui-monospace, monospace; color: #8fa2b3; border: 1px solid #ffffff26; border-radius: 3px; padding: 0 4px; }
+.placement-status { margin: 0 0 0 4px; font-size: 12px; color: #c3d0dc; }
+@media (pointer: coarse) {
+  .camera-presets button, .case-actions button { min-height: 48px; min-width: 48px; }
+  kbd { display: none; }
+}
 @media (max-width: 650px) {
   .header { padding: 16px; flex-wrap: wrap; gap: 12px; }
   .engine-status { font-size: 10px; }
   .viewport-label { top: 20px; left: 16px; }
   h2 { font-size: 20px; }
-  .dimensions { right: 16px; bottom: 18px; }
+  .dimensions { display: none; }
+  .camera-presets { top: auto; right: 16px; bottom: 16px; }
+  /* Above the camera presets. */
+  .case-actions { left: 16px; bottom: 72px; max-width: calc(100% - 32px); }
+  /* Two reserved lines, so a longer message never changes the framing. */
+  .placement-status { flex-basis: 100%; margin: 0; min-height: 2.8em; }
   footer { padding: 12px 16px; font-size: 10px; }
   footer span:last-child { display: none; }
 }
 @media (max-height: 500px) {
+  .placement-status { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; flex: 1; }
   .header { padding: 10px 18px; }
   .viewport-label { top: 12px; left: 18px; }
-  h2 { font-size: 16px; }
+  h2 { font-size: 16px; margin: 0; }
+  /* Short screens: the HUD shrinks to its essentials so the pallet keeps the clear band. */
+  .viewport-label .eyebrow, .viewport-label p, .dimensions { display: none; }
+  .camera-presets { top: 10px; right: 18px; }
+  .case-actions { left: 18px; bottom: 10px; max-width: calc(100% - 36px); }
   footer { padding: 9px 18px; }
 }

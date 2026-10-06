@@ -22,7 +22,7 @@ async function boot() {
     engine = new Engine();
     const handshake = `Engine initialized: ${engine.ping()}`;
     console.info(handshake);
-    root.render(<StrictMode><App handshake={handshake} /></StrictMode>);
+    root.render(<StrictMode><App handshake={handshake} engine={engine} /></StrictMode>);
   } catch (error) {
     if (disposed) return;
     console.error(error);

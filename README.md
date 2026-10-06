@@ -59,7 +59,7 @@ npm run build
 npm run preview
 ```
 
-The browser fetches the Wasm bytes, calls `initSync` on the main thread, constructs `Engine`, and logs `Engine initialized: v1.0.0` before mounting the viewport. Initialization errors appear on screen. Drag to orbit, scroll/pinch to zoom, and right-drag to pan.
+The browser fetches the Wasm bytes, calls `initSync` on the main thread, constructs `Engine`, and logs `Engine initialized: v1.0.0` before mounting the viewport. Initialization errors appear on screen. Drag a floor carton onto the pallet to place it (see *Placing cases* below). Drag empty space to orbit, scroll or pinch to zoom, and right-drag or two-finger drag to pan.
 
 ### Verification
 
@@ -68,7 +68,7 @@ npx playwright install chromium
 npm test
 ```
 
-The suite runs the Rust unit tests (catalog, stacking physics, and scoring), exercises the actual compiled Wasm API (including a `validate_placement` latency benchmark), runs the Vitest unit tests under `src/` (pallet geometry including raycasts through both fork openings, Rust ↔ TypeScript SKU catalog parity, procedural carton textures, and carton meshes), and checks browser startup, orbit, and desktop/phone resize. Browser tests start their own dev server on port 4173. Individual commands are `npm run test:rust`, `npm run test:wasm`, `npm run test:unit`, and `npm run test:browser`; build Wasm before running `test:wasm` or `test:unit` alone. Texture tests paint on a real Skia canvas via the `@napi-rs/canvas` dev dependency.
+The suite runs the Rust unit tests (catalog, stacking physics, and scoring), exercises the actual compiled Wasm API (including a `validate_placement` latency benchmark), runs the Vitest unit tests under `src/` (pallet geometry including raycasts through both fork openings, Rust ↔ TypeScript SKU catalog parity, procedural carton textures, carton meshes, the pointer pipeline, placement against the real Wasm engine with a per-move latency check, and camera framing), and checks browser startup, orbit, desktop/phone resize, and mouse drag-and-drop. Browser tests start their own dev server on port 4173. Individual commands are `npm run test:rust`, `npm run test:wasm`, `npm run test:unit`, and `npm run test:browser`; build Wasm before running `test:wasm` or `test:unit` alone. Texture tests paint on a real Skia canvas via the `@napi-rs/canvas` dev dependency.
 
 ### Geometry conventions
 
@@ -110,4 +110,13 @@ The 8-SKU catalog (SPEC-01 §2.2) lives in `crates/pallet_sim/src/sku.rs` and is
 - Drift = 20% × distance of the center of gravity from (24, 20) ÷ 12", capped at 20%.
 - Interlock adds 2% for each elevation where some case bridges two or more supports, up to 10%.
 - Composite score = cases × quality. Grades: S ≥ 90, A ≥ 80, B ≥ 70, C ≥ 60, F below 60.
+
+### Placing cases
+
+Each of the eight floor bays (`src/scene/staging.ts`) holds one carton and refills after a placement. Mode 1's 100-case floor replaces the bays in ticket 05.
+
+- **Pointer pipeline** (`src/controls/PointerManager.ts`): one Pointer Events path for mouse, pen, and touch. A press on a floor carton is claimed from the camera. Moving it 6px starts a drag; a shorter press is a tap that selects or deselects. Presses anywhere else go to the camera, and short ones tap: on a placed case they select it, and on empty space they clear the selection. Touch drags aim 64px above the finger. While dragging, `R`, the mouse wheel (once per scroll burst), a right-click, or a second finger rotates 90° clockwise, and `F` flips. `pointercancel` returns the case.
+- **Placement** (`src/controls/PlacementController.ts`): the pointer ray hits the deck plane or a placed case. On a case's top, the held case stacks there; on a side, it goes beside that face. The held case centers on that point and its corner snaps to the 2" grid. The engine's `validate_placement` then colors the ghost green, yellow, or red (`src/rendering/GhostBox.ts`, with a soft contact shadow). The held carton floats 2" above its ghost. Dropping in green or yellow commits; dropping in red returns the carton to its bay. A move averages well under 0.5 ms on a 100-case pallet.
+- **Camera** (`src/rendering/CameraController.ts`): OrbitControls with `Iso` (35.264° up, 45° around), `Top`, `Side` (from the +X end, between the staging rows), and `Reset`. Presets keep your zoom and pan; `Reset` discards them. The look-at point eases upward by half the stack height. `frameCompactCamera` uses `setViewOffset` to center the view in the clear band between HUD overlays, then binary-searches the closest distance that keeps the pallet, the stack, and every bay inside that band. Overlays marked `data-chrome` count as HUD on compact layouts (`COMPACT_QUERY`, SPEC-01 §7.3).
+- In development, `window.__palletTest` gives browser tests the screen positions of deck points and floor cartons.
 

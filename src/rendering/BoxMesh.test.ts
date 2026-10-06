@@ -82,3 +82,12 @@ it('eases into and out of the crushed shape instead of snapping', () => {
   carton.update(1);
   expect(bounds(carton).size).toEqual([15.75, 12, 15.75]);
 });
+
+it('rolls a flipped carton onto its side: its width becomes its height', () => {
+  // Heavy Flat 24 × 16 × 8 flipped stands 16" tall on a 24" × 8" footprint, still inset 1/8" per side.
+  expect(bounds(createBoxMesh(skuById('SKU-HF'), { flipped: true }))).toEqual({
+    size: [23.75, 16, 7.75], min: [-11.875, 0, -3.875], max: [11.875, 16, 3.875],
+  });
+  // Crushing squashes the new height and bulges up to 1/64" inside the new footprint.
+  expect(bounds(createBoxMesh(skuById('SKU-HF'), { flipped: true, crushed: true })).size).toEqual([23.9688, 14.72, 7.9688]);
+});
