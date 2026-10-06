@@ -11,9 +11,10 @@
     "build": "npm run build:wasm && npm run typecheck && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "test:wasm": "node --test tests/engine.test.mjs",
-    "test:geometry": "vitest run src/scene/pallet.test.ts",
+    "test:rust": "cargo test --manifest-path crates/pallet_sim/Cargo.toml",
+    "test:unit": "vitest run src",
     "test:browser": "playwright test",
-    "test": "npm run build:wasm && npm run test:wasm && npm run test:geometry && npm run test:browser"
+    "test": "npm run test:rust && npm run build:wasm && npm run test:wasm && npm run test:unit && npm run test:browser"
   },
   "dependencies": {
     "idb": "^8.0.3",
@@ -23,6 +24,7 @@
     "three": "^0.180.0"
   },
   "devDependencies": {
+    "@napi-rs/canvas": "^1.0.10",
     "@playwright/test": "^1.56.0",
     "@types/node": "^22.0.0",
     "@types/react": "^18.3.0",

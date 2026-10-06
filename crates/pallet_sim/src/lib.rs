@@ -1,5 +1,7 @@
 use wasm_bindgen::prelude::*;
 
+pub mod sku;
+
 /// Main-thread entry point for the pallet simulation.
 #[wasm_bindgen]
 #[derive(Default)]
@@ -15,4 +17,10 @@ impl Engine {
     pub fn ping(&self) -> String {
         format!("v{}", env!("CARGO_PKG_VERSION"))
     }
+}
+
+/// The SKU catalog as plain JS objects, for parity with `src/types/catalog.ts`.
+#[wasm_bindgen]
+pub fn sku_catalog() -> Result<JsValue, JsValue> {
+    Ok(serde_wasm_bindgen::to_value(sku::catalog())?)
 }

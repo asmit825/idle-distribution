@@ -1,15 +1,34 @@
 import { useEffect, useRef, useState } from 'react';
 import {
-  ACESFilmicToneMapping, Color, DirectionalLight, GridHelper, HemisphereLight,
+  ACESFilmicToneMapping, Color, DirectionalLight, GridHelper, Group, HemisphereLight,
   Mesh, MeshStandardMaterial, PCFSoftShadowMap, PerspectiveCamera,
   PlaneGeometry, Scene, Vector3, WebGLRenderer,
 } from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { BoxMesh } from '../rendering/BoxMesh';
+import { disposeBoxMaterials } from '../rendering/materials';
 import { createPallet } from '../scene/pallet';
+import { SKU_CATALOG } from '../types/catalog';
+
+/** Pallet underside, where floor-staged cartons rest. */
+const FLOOR_Y = -2.375;
+const GAP = 3;
+
+/** One carton of each SKU staged on the floor, widths along X: four behind the pallet, four in front. */
+const STAGED = [SKU_CATALOG.slice(0, 4), SKU_CATALOG.slice(4)].flatMap((row, i) => {
+  const side = i === 0 ? -1 : 1;
+  let x = -(row.reduce((sum, sku) => sum + sku.width_in, 0) + (row.length - 1) * GAP) / 2;
+  return row.map(sku => {
+    const position = [x + sku.width_in / 2, FLOOR_Y, side * (20 + GAP + sku.length_in / 2)] as const;
+    x += sku.width_in + GAP;
+    return { sku, yaw: 90 as const, position };
+  });
+});
 
 export function PalletCanvas() {
   const host = useRef<HTMLDivElement>(null);
   const [error, setError] = useState(false);
+  const [staging, setStaging] = useState<Group>();
 
   useEffect(() => {
     const container = host.current!;
@@ -27,6 +46,9 @@ export function PalletCanvas() {
     const scene = new Scene();
     scene.background = new Color('#131c26');
     scene.add(createPallet());
+    const cartons = new Group();
+    scene.add(cartons);
+    setStaging(cartons);
     scene.add(new HemisphereLight(0xcce4ff, 0x6b5037, 2.5));
     const sun = new DirectionalLight(0xffe5bc, 3.5);
     sun.position.set(30, 70, 35);
@@ -58,7 +80,7 @@ export function PalletCanvas() {
       // Fit the pallet's bounding sphere in either orientation and preserve zoom/orbit.
       const verticalFov = camera.fov * Math.PI / 180;
       const limitingFov = Math.min(verticalFov, 2 * Math.atan(Math.tan(verticalFov / 2) * camera.aspect));
-      const fitDistance = 34 / Math.sin(limitingFov / 2);
+      const fitDistance = 46 / Math.sin(limitingFov / 2);
       const offset = new Vector3().subVectors(camera.position, controls.target);
       camera.position.copy(controls.target).add(offset.multiplyScalar(fitDistance / previousFitDistance));
       previousFitDistance = fitDistance;
@@ -79,6 +101,10 @@ export function PalletCanvas() {
       window.removeEventListener('resize', resize);
       renderer.setAnimationLoop(null);
       controls.dispose();
+      // Cartons belong to their BoxMesh components; their cached SKU materials are released here
+      // and regenerated on the next mount.
+      scene.remove(cartons);
+      disposeBoxMaterials();
       // Shared pallet materials/geometries are disposed exactly once.
       const geometries = new Set<import('three').BufferGeometry>();
       const materials = new Set<import('three').Material>();
@@ -96,5 +122,10 @@ export function PalletCanvas() {
     };
   }, []);
 
-  return <div ref={host} className="canvas-host">{error && <p role="alert" className="startup">WebGL is unavailable. Enable hardware acceleration or try another browser.</p>}</div>;
+  return (
+    <div ref={host} className="canvas-host">
+      {error && <p role="alert" className="startup">WebGL is unavailable. Enable hardware acceleration or try another browser.</p>}
+      {staging && STAGED.map(({ sku, yaw, position }) => <BoxMesh key={sku.id} parent={staging} sku={sku} yaw={yaw} position={position} />)}
+    </div>
+  );
 }

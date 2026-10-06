@@ -68,7 +68,7 @@ npx playwright install chromium
 npm test
 ```
 
-The suite exercises the actual compiled Wasm API, the public Three.js pallet geometry (including raycasts through both fork openings), and browser startup, orbit, and desktop/phone resize. Browser tests start their own dev server on port 4173. Individual commands are `npm run test:wasm`, `npm run test:geometry`, and `npm run test:browser`; build Wasm before running the handshake test alone.
+The suite runs the Rust unit tests, exercises the actual compiled Wasm API, runs the Vitest unit tests under `src/` (pallet geometry including raycasts through both fork openings, Rust ↔ TypeScript SKU catalog parity, procedural carton textures, and carton meshes), and checks browser startup, orbit, and desktop/phone resize. Browser tests start their own dev server on port 4173. Individual commands are `npm run test:rust`, `npm run test:wasm`, `npm run test:unit`, and `npm run test:browser`; build Wasm before running `test:wasm` or `test:unit` alone. Texture tests paint on a real Skia canvas via the `@napi-rs/canvas` dev dependency.
 
 ### Geometry conventions
 
@@ -77,3 +77,9 @@ One rendering unit is one inch. Three.js uses Y up, with the pallet's geometric 
 The mesh contains seven top boards, three continuous notched stringers, and five bottom boards. Each runner has two 9 × 1.25 inch openings beginning six inches from its ends. Wood grain and flush nail heads are procedural. The React viewport disposes GPU resources, controls, animation callbacks, and resize listeners on unmount, including hot reload and Strict Mode remounts.
 
 The `uuid` override updates the top-level-await plugin's transitive dependency to its patched compatible API. Keep this override until the plugin updates its dependency.
+
+### Cartons
+
+The 8-SKU catalog (SPEC-01 §2.2) lives in `crates/pallet_sim/src/sku.rs` and is mirrored by `src/types/catalog.ts`; the Wasm export `sku_catalog()` lets the unit tests enforce parity. `src/rendering/materials.ts` paints every face on its own canvas at 32 px per inch, so no face stretches, with kraft, flutes, tape style, weight badge, Code 39 shipping label, and handling marks. Red encodes bump height and green encodes roughness in one surface texture. Materials are cached per SKU and shared by every carton of that SKU.
+
+`createBoxMesh(sku, { crushed })` in `src/rendering/BoxMesh.tsx` returns a carton whose origin is the center of its base. It renders 1/8" inside its grid footprint on each side (`cartonSize` in `materials.ts`), so flush neighbors never share a plane. Setting `crushed` eases over 0.25 s to 0.92 height with the base planted. A morph target sinks the top and bows the sides at the same time. The lateral bulge is 1.03, capped 1/64" inside the grid footprint so crushed neighbors never touch; in practice the cap always applies. Anything stacked on a crushed carton must be lowered by the stacking engine (ticket 03). The `<BoxMesh parent={…} sku={…} />` component mounts one into the imperative scene; the viewport stages one carton of each SKU on the floor and disposes the cached materials on unmount.
