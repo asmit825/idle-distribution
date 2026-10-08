@@ -44,7 +44,8 @@
     "vite-plugin-top-level-await": "^1.6.0",
     "vite-plugin-wasm": "^3.5.0",
     "vitest": "^4.1.11",
-    "wasm-pack": "^0.15.0"
+    "wasm-pack": "^0.15.0",
+    "wrangler": "^4.148.0"
   },
   "overrides": {
     "vite-plugin-top-level-await": {
