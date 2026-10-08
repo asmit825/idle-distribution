@@ -124,7 +124,7 @@ impl Placement {
         {
             return Err(PlacementError::OffPallet);
         }
-        if !yaw_deg.is_multiple_of(90) || yaw_deg >= 360 {
+        if (yaw_deg % 90 != 0) || yaw_deg >= 360 {
             return Err(PlacementError::InvalidYaw);
         }
         Ok(Placement {
@@ -138,7 +138,7 @@ impl Placement {
 
     pub fn footprint(&self) -> Rect {
         let (length, width) = (self.sku.length_in as i32, self.base_depth());
-        let (dx, dy) = if self.yaw_deg.is_multiple_of(180) {
+        let (dx, dy) = if self.yaw_deg % 180 == 0 {
             (length, width)
         } else {
             (width, length)

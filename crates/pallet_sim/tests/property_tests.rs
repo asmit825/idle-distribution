@@ -17,7 +17,7 @@ fn random_placement(rng: &mut ChaCha8Rng) -> Placement {
     let grid_x = (rng.next_u32() % 28) as i32 - 2;
     let grid_y = (rng.next_u32() % 24) as i32 - 2;
     let yaw = (rng.next_u32() % 4) as u16 * 90;
-    let flipped = rng.next_u32().is_multiple_of(5);
+    let flipped = rng.next_u32() % 5 == 0;
     Placement::new(sku.id, grid_x, grid_y, yaw, flipped).unwrap()
 }
 

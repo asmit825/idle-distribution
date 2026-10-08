@@ -1,0 +1,21 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "idlemullet-router",
+  "main": "server/worker.js",
+  "compatibility_date": "2024-01-01",
+  "account_id": "4d9a172a2e7dd978083f9d0fc83cc8c7",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS"
+  },
+  "routes": [
+    {
+      "pattern": "idlemullet.com/*",
+      "zone_name": "idlemullet.com"
+    },
+    {
+      "pattern": "*.idlemullet.com/*",
+      "zone_name": "idlemullet.com"
+    }
+  ]
+}
