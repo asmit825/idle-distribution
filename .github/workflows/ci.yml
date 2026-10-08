@@ -13,6 +13,8 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # Full history and tags, so the build can work out its version.
 
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -58,9 +60,13 @@ jobs:
     needs: validate
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Download Production Dist
         uses: actions/download-artifact@v4
@@ -81,3 +87,16 @@ jobs:
           DOPPLER_TOKEN: ${{ secrets.DOPPLER_TOKEN }}
         run: |
           doppler run -- npx --yes wrangler deploy
+
+      # Tags the version scripts/version.mjs worked out from commit messages and publishes its notes.
+      # Pushes with only chore/ci/docs commits keep the last version, so there is nothing to release.
+      - name: Tag Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="v$(node scripts/version.mjs --notes notes.md)"
+          if gh release view "$VERSION" > /dev/null 2>&1; then
+            echo "$VERSION already released; deployed commit ${GITHUB_SHA::7}."
+            exit 0
+          fi
+          gh release create "$VERSION" --target "$GITHUB_SHA" --title "$VERSION" --notes-file notes.md

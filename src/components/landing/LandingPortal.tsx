@@ -7,6 +7,7 @@ import { RulesModal } from './RulesModal';
 import { useCareerStats } from './CareerStatsRow';
 import { PalletGalleryModal } from '../gallery/PalletGalleryModal';
 import { sfx } from '../../utils/audio';
+import { VERSION_LABEL } from '../../version';
 import '../../styles/landing.css';
 
 export function LandingPortal({ onSelectMode, seed, galleryOpen = false, closeGallery, sandbox, setSandbox }: {
@@ -37,7 +38,7 @@ export function LandingPortal({ onSelectMode, seed, galleryOpen = false, closeGa
       </div>
     </main>
     <footer className="landing-bottom-bar">
-      <div className="landing-telemetry"><span><i />Pallet engine ready</span><span>{stats.status === 'ready' ? 'Saved on this device' : stats.status === 'loading' ? 'Loading saved builds…' : 'Saved builds unavailable'}</span><span>Target height: 60″ ceiling</span></div>
+      <div className="landing-telemetry"><span><i />Pallet engine ready</span><span>{stats.status === 'ready' ? 'Saved on this device' : stats.status === 'loading' ? 'Loading saved builds…' : 'Saved builds unavailable'}</span><span>Target height: 60″ ceiling</span><span>{VERSION_LABEL}</span></div>
       <button type="button" className="landing-sound" aria-pressed={sound} disabled={!sfx.supported} onClick={() => {
         const enabled = !sound; sfx.setEnabled(enabled); setSound(enabled); if (enabled) sfx.playClick();
       }}>{sound ? <Volume2 size={15} aria-hidden="true" /> : <VolumeX size={15} aria-hidden="true" />}Sound {sound ? 'on' : 'off'}</button>

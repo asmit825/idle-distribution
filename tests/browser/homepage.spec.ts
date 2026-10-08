@@ -11,6 +11,7 @@ test('opens the dispatch terminal at the root and selects the launch action with
   await expect(floorMode(page)).toHaveAttribute('aria-pressed', 'true');
   await expect(page.getByRole('button', { name: 'Launch 100-Case Sprint' })).toBeVisible();
   await expect(page.getByRole('timer')).toHaveCount(0);
+  await expect(page.locator('.landing-bottom-bar').getByText(/^v\d+\.\d+\.\d+ · \w+$/)).toBeVisible();
 
   await conveyorMode(page).click();
   await expect(conveyorMode(page)).toHaveAttribute('aria-pressed', 'true');
