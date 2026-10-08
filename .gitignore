@@ -1,7 +1,39 @@
+# Dependencies & Package Builds
 node_modules/
 dist/
 pkg/
-crates/pallet_sim/target/
+
+# Rust Build Artifacts
+**/target/
+**/*.rs.bk
+
+# Testing & Coverage
 playwright-report/
 test-results/
+coverage/
+
+# Environment & Local Secrets
+.env
+.env.local
+.env.*.local
+
+# IDE & Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*.tsbuildinfo
+
+# OS & Cloud Storage Sync (macOS / Google Drive)
 .DS_Store
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# Project Specific Ignored Folders
+reference-docs/
+.kennel-hub/
