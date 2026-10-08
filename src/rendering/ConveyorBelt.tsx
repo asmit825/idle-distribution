@@ -5,26 +5,34 @@ import {
 } from 'three';
 import { createBoxMesh, type Carton } from './BoxMesh';
 import { stagingBay } from '../scene/staging';
-import { skuById } from '../types/catalog';
+import { skuById, type SkuDef } from '../types/catalog';
 import type { ConveyorCase, ConveyorStatus } from '../types/engine';
 
 const BELT_Y = 8;
-/** Two accumulating roller lanes, with the oldest carton beside the pallet at the pick spur. */
-const SLOTS = [
-  [52, 40], [52, 14], [52, -12], [52, -38], [52, -64],
-  [80, -64], [80, -38], [80, -12], [80, 14], [80, 40],
-].map(([x, z]) => new Vector3(x, BELT_Y, z));
-const INTAKE = new Vector3(80, BELT_Y, 112);
+/**
+ * The accumulation belt, traced back from the end stop at the pick spur beside the pallet: down
+ * the pick lane (the final run, `FINAL_RUN_IN` in mode2.rs), across the transfer, and up the
+ * infeed lane to the intake.
+ */
+const BELT = [[52, 52], [52, -64], [80, -64], [80, 112]].map(([x, z]) => new Vector3(x, BELT_Y, z));
+const LEGS = BELT.slice(1).map((end, i) => ({ start: BELT[i], end, length: end.distanceTo(BELT[i]) }));
+const BELT_LENGTH = LEGS.reduce((sum, leg) => sum + leg.length, 0);
+const INTAKE = BELT.at(-1)!;
 const DIVERSION_GATE = new Vector3(80, BELT_Y, 72);
 const OVERFLOW_END = new Vector3(140, BELT_Y, 72);
 export const CONVEYOR_BOUNDS = new Box3(new Vector3(37, -2.4, -79), new Vector3(154, 34, 126));
 
-export function conveyorPickBay(item: ConveyorCase) {
-  const bay = stagingBay(item.id, skuById(item.sku_id), 0, SLOTS[0].x, SLOTS[0].z);
-  const lift = BELT_Y - bay.position.y;
-  bay.position.y += lift;
-  bay.bounds.translate(new Vector3(0, lift, 0));
-  return bay;
+/** A pick bay for each carton on the final run, where it waits on the belt. */
+export function conveyorPickBays({ queue, final_run }: Pick<ConveyorStatus, 'queue' | 'final_run'>) {
+  const onRun = queue.slice(0, final_run);
+  const spots = queueSpots(onRun.map(item => skuById(item.sku_id)));
+  return onRun.map((item, index) => {
+    const bay = stagingBay(item.id, skuById(item.sku_id), 0, spots[index].x, spots[index].z);
+    const lift = BELT_Y - bay.position.y;
+    bay.position.y += lift;
+    bay.bounds.translate(new Vector3(0, lift, 0));
+    return bay;
+  });
 }
 
 /** Mounts roller lanes, a diversion spur, and cartons driven only by Rust's conveyor snapshot. */
@@ -115,20 +123,23 @@ export function ConveyorBelt({ parent, readStatus, movePick, heldCase, revision 
         for (const { mesh, axis } of rollers) mesh.rotation[axis] = turns * 22;
         for (const { signal, material } of lamps) {
           const active = signal === status.signal;
-          const blink = signal !== 'green' && !status.end_reason && Math.floor(status.elapsed_ms / 450) % 2 === 0;
+          const blink = signal !== 'green' && !status.end_reason && Math.floor(status.elapsed_ms / (signal === 'red' ? 200 : 450)) % 2 === 0;
           material.emissiveIntensity = active ? (blink ? 0.6 : 2) : 0.04;
         }
         const keep = new Set<number>();
+        const spots = queueDistances([...status.queue, status.incoming].map(item => skuById(item.sku_id)));
         status.queue.forEach((item, index) => {
-          const carton = cartonAt(item, SLOTS[index], keep, seconds);
-          if (index === 0) movePick(item.id, carton.position);
+          const carton = cartonAt(item, beltPoint(spots[index]), keep, seconds);
+          if (index < status.final_run) movePick(item.id, carton.position);
         });
         // Shipping freezes the in-flight carton. At Estop it becomes the fifth diversion.
         if (status.end_reason !== 'estop') {
-          const route = status.queue.length < 10
-            ? [INTAKE, ...SLOTS.slice(status.queue.length).reverse()]
-            : [INTAKE, DIVERSION_GATE];
-          cartonAt(status.incoming, alongRoute(route, status.arrival_progress), keep, seconds);
+          // It rides up to the back of the queue, or across to the overflow spur when the buffer is full.
+          const tail = spots[status.queue.length];
+          const position = status.recirculating < 10
+            ? beltPoint(BELT_LENGTH - Math.min(1, status.arrival_progress) * (BELT_LENGTH - tail))
+            : alongRoute([INTAKE, DIVERSION_GATE], status.arrival_progress);
+          cartonAt(status.incoming, position, keep, seconds);
         }
         for (const diversion of status.diversions) {
           const progress = (status.elapsed_ms - diversion.elapsed_ms) / 2_000;
@@ -154,6 +165,48 @@ export function ConveyorBelt({ parent, readStatus, movePick, heldCase, revision 
     };
   }, [parent, readStatus, movePick, heldCase]);
   return null;
+}
+
+/**
+ * Where cartons queued in this order wait on the belt, front first: each pressed against the
+ * one ahead, the first against the end stop. Cartons ride lengthwise across the lanes, so each
+ * takes its width along a lane and its length across the transfer.
+ */
+export function queueSpots(skus: readonly SkuDef[]) {
+  return queueDistances(skus).map(beltPoint);
+}
+
+/** Each queued carton's center, in inches along the belt from the end stop. */
+function queueDistances(skus: readonly SkuDef[]) {
+  const centers: number[] = [];
+  let cursor = 0;
+  let legStart = 0;
+  let leg = 0;
+  for (const sku of skus) {
+    for (;;) {
+      const { start, end, length } = LEGS[leg];
+      const depth = start.x === end.x ? sku.width_in : sku.length_in;
+      // A carton that would hang round a corner starts on the next leg instead.
+      if (cursor + depth <= legStart + length || leg === LEGS.length - 1) {
+        centers.push(cursor + depth / 2);
+        cursor += depth;
+        break;
+      }
+      legStart += length;
+      cursor = legStart;
+      leg++;
+    }
+  }
+  return centers;
+}
+
+/** The belt point `distance` inches back from the end stop. */
+function beltPoint(distance: number) {
+  for (const { start, end, length } of LEGS) {
+    if (distance <= length) return start.clone().lerp(end, distance / length);
+    distance -= length;
+  }
+  return INTAKE.clone();
 }
 
 function alongRoute(points: Vector3[], progress: number) {

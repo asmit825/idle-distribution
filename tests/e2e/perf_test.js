@@ -1,6 +1,6 @@
-// Frame-rate profile (SPEC-01 §10.2): a Mode 1 shift keeps all 100 cartons in the scene (a
-// seeded floor cannot fit on one pallet), with a layer of 12 stacked on the pallet. Frame cadence is
-// sampled at rest and while a carton is dragged over the stack, revalidating every move.
+// Frame-rate profile (SPEC-01 §10.2): a Mode 1 shift with its first 25-case wave in the scene, 10
+// of them stacked two high on the pallet. Frame cadence is sampled at rest and while a carton is dragged
+// over the stack, revalidating every move.
 // Needs a hardware GPU: run with `npm run test:perf` on a machine with one.
 import { devices } from '@playwright/test';
 import { assert, Checklist, launchBrowser, openPage, settled, sleep, startDevServer, until } from './harness.js';
@@ -8,8 +8,12 @@ import { assert, Checklist, launchBrowser, openPage, settled, sleep, startDevSer
 const PORT = 4176;
 /** 60 FPS within normal vsync jitter. */
 const MIN_FPS = 58;
-/** One layer of Medium Squares, 4 × 3 across the deck. */
-const LAYER = [[6, 6], [18, 6], [30, 6], [42, 6], [6, 18], [18, 18], [30, 18], [42, 18], [6, 30], [18, 30], [30, 30], [42, 30]];
+/**
+ * Seed 42's first wave has five Heavy Cubes (16″, 12″ tall) and five Medium Squares (12″): the
+ * cubes go down across the deck, each with a square on top. Centers in deck inches, and elevation.
+ */
+const SPOTS = [[8, 8], [24, 8], [40, 8], [8, 24], [24, 24]];
+const STACK = [...SPOTS.map(([x, y]) => ['SKU-HC', 'Heavy Cube', x, y, 0]), ...SPOTS.map(([x, y]) => ['SKU-MQ', 'Medium Square', x, y, 12])];
 /** A frame slower than this is a visible hitch (a skipped 60 Hz vsync). */
 const HITCH_MS = 25;
 const MAX_HITCH_SHARE = 0.02;
@@ -24,7 +28,7 @@ const checklist = new Checklist();
 const problems = [];
 
 async function profile({ label, device }) {
-  const page = await openPage(browser, device, `${server.url}/?seed=42`, problems);
+  const page = await openPage(browser, device, `${server.url}/?mode=1&seed=42`, problems);
   const gpu = await page.evaluate(() => {
     const gl = document.createElement('canvas').getContext('webgl2');
     return gl.getParameter(gl.getExtension('WEBGL_debug_renderer_info').UNMASKED_RENDERER_WEBGL);
@@ -32,17 +36,17 @@ async function profile({ label, device }) {
   console.log(`${label} — ${gpu}`);
   assert(!/swiftshader|llvmpipe|software/i.test(gpu), `software renderer (${gpu}); run on a machine with a GPU`);
 
-  // Stack the layer with real drags; every carton stays in the scene, on the floor or the pallet.
-  for (const [x, y] of LAYER) {
-    const to = await settled(() => page.evaluate(([x, y]) => window.__palletTest.deckPoint(x, y), [x, y]));
-    await drag(page, 'SKU-MQ', [to]);
+  // Stack with real drags; every carton stays in the scene, on the floor or the pallet.
+  for (const [skuId, name, x, y, elevation] of STACK) {
+    const to = await settled(() => page.evaluate(spot => window.__palletTest.deckPoint(...spot), [x, y, elevation]));
+    await drag(page, skuId, [to]);
     await page.mouse.up();
-    await until(status(page), text => text.startsWith('Placed Medium Square'), text => `drop at ${x}, ${y}: ${text}`);
+    await until(status(page), text => text.startsWith(`Placed ${name},`) && text.includes(`at ${elevation}″.`), text => `drop at ${x}, ${y}: ${text}`);
   }
-  const load = `${LAYER.length} cartons stacked on the pallet, ${100 - LAYER.length} on the floor`;
+  const load = `${STACK.length} cartons stacked on the pallet, ${25 - STACK.length} on the floor`;
   const running = async () => (await page.getByRole('timer').textContent()) !== '0:00';
 
-  await check(`${label}: holds 60 FPS at rest with 100 cartons in the scene`, async () => {
+  await check(`${label}: holds 60 FPS at rest with a full wave of cartons in the scene`, async () => {
     const summary = report(await sampleFrames(page, () => sleep(50)));
     assert(await running(), 'the shift ended while sampling');
     return `${summary}; ${load}`;

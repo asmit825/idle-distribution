@@ -8,7 +8,7 @@ test('boots the main-thread engine and renders a responsive, interactive pallet'
     messages.push(message.text());
     if (message.type() === 'error') errors.push(message.text());
   });
-  await page.goto('/');
+  await page.goto('/?mode=1');
   await expect(page.getByRole('status')).toHaveText('Engine initialized: v1.0.0');
   const canvas = page.getByRole('img', { name: 'Interactive 48 by 40 inch stringer pallet' });
   await expect(canvas).toBeVisible();

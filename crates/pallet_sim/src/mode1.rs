@@ -1,15 +1,19 @@
-//! Mode 1: 100-Case Free Staging, the 60-second shift rush (SPEC-01 §5.1).
+//! Mode 1: 100-Case Free Staging, the 60-second shift rush (SPEC-01 §5.1). The 100 cases
+//! reach the floor in waves of 25: the next wave arrives once every case on the floor is placed.
+//! A sandbox shift has no clock and no last wave: the floor keeps refilling until the pallet ships.
 
 use rand_chacha::rand_core::{RngCore, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use serde::Serialize;
 
-use crate::grid::{Placement, Rejection, Status, Validation};
-use crate::physics::{CaseId, Pallet, RemoveError};
+use crate::grid::{Placement, Rejection, Validation};
+use crate::physics::{CaseId, MoveError, Pallet, RemoveError};
 use crate::scoring::{self, Score};
-use crate::sku::{self, HandlingClass, SkuDef};
+use crate::sku::{self, SkuDef};
 
 pub const SHIFT_CASES: usize = 100;
+/// Cases per wave on the floor.
+pub const WAVE_CASES: usize = 25;
 /// The shift countdown, from the first pick.
 pub const SHIFT_MS: u32 = 60_000;
 
@@ -26,15 +30,18 @@ pub struct FloorCase {
 /// The shift's floor inventory, identical on every device for the same seed (SPEC-01 §3.2).
 pub fn spawn(seed: u64) -> Vec<FloorCase> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    (0..SHIFT_CASES as u32).map(|id| draw(&mut rng, id)).collect()
+}
+
+/// The next case from a seed's supply.
+fn draw(rng: &mut ChaCha8Rng, id: u32) -> FloorCase {
     let catalog = sku::catalog();
-    (0..SHIFT_CASES as u32)
-        .map(|id| FloorCase {
-            id,
-            // Eight SKUs divide 2³² evenly, so the modulo is unbiased.
-            sku: &catalog[rng.next_u32() as usize % catalog.len()],
-            yaw_deg: if rng.next_u32() & 1 == 0 { 0 } else { 90 },
-        })
-        .collect()
+    FloorCase {
+        id,
+        // Eight SKUs divide 2³² evenly, so the modulo is unbiased.
+        sku: &catalog[rng.next_u32() as usize % catalog.len()],
+        yaw_deg: if rng.next_u32() & 1 == 0 { 0 } else { 90 },
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -51,7 +58,7 @@ pub enum Phase {
 pub enum EndReason {
     TimeUp,
     Shipped,
-    /// All 100 cases placed before time ran out.
+    /// Every wave placed before time ran out. A sandbox shift never runs out of waves.
     AllPlaced,
 }
 
@@ -68,8 +75,10 @@ pub struct ShiftResult {
 pub enum ShiftError {
     /// The shift is complete; the floor is closed.
     ShiftOver,
-    /// No such floor case, or it is already on the pallet.
+    /// No such floor case, its wave has not arrived, or it is already on the pallet.
     NotOnFloor,
+    /// No such placed case, or another rests on it.
+    NotMovable,
     /// A drop with no case picked, or of a different SKU than the one picked.
     NotHeld,
     Rejected(Rejection),
@@ -80,10 +89,15 @@ pub enum ShiftError {
 pub struct Shift {
     seed: u64,
     floor: Vec<FloorCase>,
+    /// How many floor cases, in id order, have arrived.
+    released: usize,
     on_floor: Vec<bool>,
     pallet: Pallet,
     held: Option<u32>,
     placed_sources: Vec<(CaseId, u32)>,
+    /// Deals the sandbox's endless waves once the spawned floor runs out.
+    supply: ChaCha8Rng,
+    sandbox: bool,
     /// The latest timestamp seen, in the caller's milliseconds (`performance.now()`).
     now_ms: f64,
     started_ms: Option<f64>,
@@ -93,13 +107,22 @@ pub struct Shift {
 
 impl Shift {
     pub fn new(seed: u64) -> Shift {
-        Shift::with_floor(seed, spawn(seed))
+        let mut shift = Shift::with_floor(seed, Vec::new());
+        shift.floor = (0..SHIFT_CASES as u32)
+            .map(|id| draw(&mut shift.supply, id))
+            .collect();
+        shift.on_floor = vec![true; SHIFT_CASES];
+        shift.released = WAVE_CASES;
+        shift
     }
 
     /// A shift over a given floor, ids `0..floor.len()` in order.
     pub fn with_floor(seed: u64, floor: Vec<FloorCase>) -> Shift {
         Shift {
             seed,
+            supply: ChaCha8Rng::seed_from_u64(seed),
+            sandbox: false,
+            released: floor.len().min(WAVE_CASES),
             on_floor: vec![true; floor.len()],
             floor,
             pallet: Pallet::default(),
@@ -112,12 +135,38 @@ impl Shift {
         }
     }
 
+    /// The same shift without a clock, its floor refilling wave after wave until the pallet ships.
+    pub fn sandbox(mut self) -> Shift {
+        self.sandbox = true;
+        self
+    }
+
+    pub fn is_sandbox(&self) -> bool {
+        self.sandbox
+    }
+
     pub fn seed(&self) -> u64 {
         self.seed
     }
 
+    /// Every case of the shift, arrived or not.
     pub fn floor(&self) -> &[FloorCase] {
         &self.floor
+    }
+
+    /// The cases whose wave has arrived, waiting or placed.
+    pub fn released(&self) -> &[FloorCase] {
+        &self.floor[..self.released]
+    }
+
+    /// Whether arrived case `id` is waiting on the floor.
+    pub fn is_on_floor(&self, id: u32) -> bool {
+        (id as usize) < self.released && self.on_floor[id as usize]
+    }
+
+    /// The current wave, from 1.
+    pub fn wave(&self) -> u32 {
+        self.released.div_ceil(WAVE_CASES) as u32
     }
 
     pub fn pallet(&self) -> &Pallet {
@@ -125,7 +174,10 @@ impl Shift {
     }
 
     pub fn cases_on_floor(&self) -> u32 {
-        self.on_floor.iter().filter(|&&waiting| waiting).count() as u32
+        self.on_floor[..self.released]
+            .iter()
+            .filter(|&&waiting| waiting)
+            .count() as u32
     }
 
     pub fn phase(&self) -> Phase {
@@ -140,17 +192,30 @@ impl Shift {
         self.end
     }
 
-    /// Whole milliseconds left, rounded up, as of the latest timestamp. Frozen once complete.
+    /// Whole milliseconds left, rounded up, as of the latest timestamp. Frozen once complete;
+    /// a sandbox shift always has the full shift left.
     pub fn time_remaining_ms(&self) -> u32 {
         self.remaining_ms
     }
 
-    /// Advances the clock to `now_ms`, ending the shift at 0:00. Earlier timestamps are ignored.
+    /// Whole milliseconds since the first pick, as of the latest timestamp. Frozen once complete.
+    pub fn elapsed_ms(&self) -> u32 {
+        if !self.sandbox {
+            return SHIFT_MS - self.remaining_ms;
+        }
+        self.started_ms
+            .map_or(0, |started| (self.now_ms - started).max(0.0) as u32)
+    }
+
+    /// Advances the clock to `now_ms`, ending a timed shift at 0:00. Earlier timestamps are ignored.
     pub fn tick(&mut self, now_ms: f64) {
         if self.end.is_some() {
             return;
         }
         self.now_ms = self.now_ms.max(now_ms);
+        if self.sandbox {
+            return;
+        }
         if let Some(started) = self.started_ms {
             let left = (f64::from(SHIFT_MS) - (self.now_ms - started)).max(0.0);
             self.remaining_ms = left.ceil() as u32;
@@ -166,7 +231,7 @@ impl Shift {
         if self.end.is_some() {
             return Err(ShiftError::ShiftOver);
         }
-        if !self.on_floor.get(id as usize).copied().unwrap_or(false) {
+        if !self.is_on_floor(id) {
             return Err(ShiftError::NotOnFloor);
         }
         self.started_ms.get_or_insert(self.now_ms);
@@ -174,15 +239,37 @@ impl Shift {
         Ok(())
     }
 
-    /// The pallet's verdict, plus the Mode 1 rule: no heavy case directly on a light or fragile one.
+    /// The pallet's verdict. A heavy case may go on a light one; crushing it costs Load Quality.
     pub fn validate(&self, placement: &Placement) -> Validation {
-        let mut check = self.pallet.validate(placement);
-        if check.rejection.is_none() && self.heavy_on_light(placement, check.elevation_in) {
-            check.status = Status::Invalid;
-            check.rejection = Some(Rejection::HeavyOnLight);
-            check.would_crush = 0;
+        self.pallet.validate(placement)
+    }
+
+    /// The verdict on moving exposed case `case_id` to `placement`, as if it were lifted.
+    pub fn validate_move(
+        &self,
+        case_id: CaseId,
+        placement: &Placement,
+    ) -> Result<Validation, RemoveError> {
+        self.pallet.validate_move(case_id, placement)
+    }
+
+    /// Moves an exposed case on the pallet; the floor is unchanged.
+    pub fn relocate(
+        &mut self,
+        case_id: CaseId,
+        placement: Placement,
+        now_ms: f64,
+    ) -> Result<(), ShiftError> {
+        self.tick(now_ms);
+        if self.end.is_some() {
+            return Err(ShiftError::ShiftOver);
         }
-        check
+        self.pallet
+            .relocate(case_id, placement)
+            .map_err(|error| match error {
+                MoveError::Rejected(rejection) => ShiftError::Rejected(rejection),
+                MoveError::NotFound | MoveError::Supporting => ShiftError::NotMovable,
+            })
     }
 
     /// Drops the picked case at `placement`; it must be the picked case's SKU.
@@ -195,9 +282,6 @@ impl Shift {
             .held
             .filter(|&id| self.floor[id as usize].sku == placement.sku)
             .ok_or(ShiftError::NotHeld)?;
-        if let Some(rejection) = self.validate(&placement).rejection {
-            return Err(ShiftError::Rejected(rejection));
-        }
         let case = self
             .pallet
             .commit(placement)
@@ -206,7 +290,18 @@ impl Shift {
         self.on_floor[id as usize] = false;
         self.held = None;
         if self.cases_on_floor() == 0 {
-            self.finish(EndReason::AllPlaced);
+            if self.sandbox && self.released == self.floor.len() {
+                for _ in 0..WAVE_CASES {
+                    let case = draw(&mut self.supply, self.floor.len() as u32);
+                    self.floor.push(case);
+                    self.on_floor.push(true);
+                }
+            }
+            if self.released < self.floor.len() {
+                self.released = self.floor.len().min(self.released + WAVE_CASES);
+            } else {
+                self.finish(EndReason::AllPlaced);
+            }
         }
         Ok(case)
     }
@@ -254,18 +349,5 @@ impl Shift {
     fn finish(&mut self, reason: EndReason) {
         self.end = Some(reason);
         self.held = None;
-    }
-
-    fn heavy_on_light(&self, placement: &Placement, elevation: i32) -> bool {
-        placement.sku.handling == HandlingClass::Heavy
-            && self
-                .pallet
-                .beneath(&placement.footprint(), elevation)
-                .any(|case| {
-                    matches!(
-                        case.placement.sku.handling,
-                        HandlingClass::Light | HandlingClass::Fragile
-                    )
-                })
     }
 }

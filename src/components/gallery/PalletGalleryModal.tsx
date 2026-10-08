@@ -37,7 +37,7 @@ export function PalletGalleryModal({ close }: { close(): void }) {
       : !history.rounds.length ? <p className="gallery-empty">Your first completed round will appear here.</p>
       : <div className="gallery-layout">
         <nav aria-label="Saved rounds" className="round-list">{history.rounds.map(item => <button type="button" key={item.id} aria-pressed={item.id === selected} onClick={() => setSelected(item.id)}>
-          <strong>{MODE_LABELS[item.mode]} · Grade {gradeLabel(item.grade)} · {item.final_score.toFixed(0)} pts</strong>
+          <strong>{MODE_LABELS[item.mode]}{item.sandbox && ' Sandbox'} · Grade {gradeLabel(item.grade)} · {item.final_score.toFixed(0)} pts</strong>
           <span>{new Date(item.timestamp).toLocaleString()}</span><span>{item.cases_placed} cases · {item.end_reason.replaceAll('_', ' ')}</span>
         </button>)}</nav>
         {round && <section className="saved-build" aria-label="Selected pallet">
@@ -50,6 +50,6 @@ export function PalletGalleryModal({ close }: { close(): void }) {
               <td>{placed.rotation_yaw}°{placed.flipped && ' · flipped'}</td><td>{placed.crushed ? 'Crushed' : 'Intact'}</td></tr>)}</tbody></table></div>
         </section>}
       </div>}
-    <p className="storage-note">Saved on this browser. Export a backup before clearing site data. Fastest times exclude timed-out shifts, Estops, and empty pallets.</p>
+    <p className="storage-note">Saved on this browser. Export a backup before clearing site data. Fastest times exclude timed-out shifts, Estops, and empty pallets. Sandbox pallets never count toward personal bests.</p>
   </dialog>;
 }

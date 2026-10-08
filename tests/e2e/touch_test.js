@@ -19,7 +19,7 @@ const problems = [];
 
 /** One Mode 1 shift on a phone, from tap-picking in portrait to stacking in landscape. */
 async function phoneShift() {
-  const { page, touch } = await open(IPHONE, '/?seed=42');
+  const { page, touch } = await open(IPHONE, '/?mode=1&seed=42');
   const inspector = page.getByRole('region', { name: 'Active case inspector' });
   const done = page.getByRole('button', { name: 'Done', exact: true });
 
@@ -147,7 +147,7 @@ async function phoneShift() {
 
 /** Orbit, pinch, and pan on an untouched floor, judged by where the deck's corners project. */
 async function cameraGestures() {
-  const { page, touch } = await open(IPHONE, '/?seed=42');
+  const { page, touch } = await open(IPHONE, '/?mode=1&seed=42');
   const start = await settled(() => deckPose(page));
 
   let orbited;
@@ -190,7 +190,7 @@ async function cameraGestures() {
 }
 
 async function tablet() {
-  const { page, touch } = await open(IPAD, '/?seed=42');
+  const { page, touch } = await open(IPAD, '/?mode=1&seed=42');
 
   await check('a wide tablet uses the compact HUD from its coarse pointer alone', async () => {
     assert(IPAD.viewport.width > 900 && IPAD.viewport.height > 540, 'viewport would be compact by size');
@@ -209,7 +209,7 @@ async function tablet() {
 
 async function modeToggling() {
   // Seed 2149's conveyor opens with Light Talls.
-  const { page, touch } = await open(IPHONE, '/?seed=2149');
+  const { page, touch } = await open(IPHONE, '/?mode=1&seed=2149');
   const timer = page.getByRole('timer');
 
   await check('tapping Mode 2 starts a conveyor run on a fresh pallet', async () => {
@@ -220,10 +220,10 @@ async function modeToggling() {
   });
 
   await check('the oldest conveyor carton can be touch-dragged from the pick spur onto the pallet', async () => {
-    // Wait for the first arrival to reach the pick spur beside the signal tower.
+    // Wait for the first arrival, a 12″-deep Light Tall, to reach the end stop at the pick spur.
     await until(() => page.evaluate(() => {
       const head = window.__palletTest?.conveyorCartons()[0];
-      return head ? Math.hypot(head.x - 52, head.z - 40) : Infinity;
+      return head ? Math.hypot(head.x - 52, head.z - 46) : Infinity;
     }), distance => distance < 0.05, distance => `head is ${distance}″ from the spur`, { timeout: 10_000 });
     const carton = await settled(() => page.evaluate(() => window.__palletTest.bayCarton('SKU-LT')));
     const to = await settled(() => page.evaluate(() => window.__palletTest.deckPoint(24, 20)));
@@ -243,7 +243,7 @@ async function modeToggling() {
 }
 
 async function desktop() {
-  const { page } = await open({ viewport: { width: 1280, height: 800 } }, '/?seed=42');
+  const { page } = await open({ viewport: { width: 1280, height: 800 } }, '/?mode=1&seed=42');
   const inspector = page.getByRole('region', { name: 'Active case inspector' });
 
   await check('desktop mouse drag-and-drop still places, with R and F working mid-drag', async () => {

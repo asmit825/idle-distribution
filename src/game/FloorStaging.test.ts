@@ -7,7 +7,7 @@ import { BAY_IN, stageFloor, type FloorLayout } from './FloorStaging';
 
 /** 100 cases cycling through the catalog, alternating which way they lie. */
 const FLOOR: FloorCase[] = Array.from({ length: 100 }, (_, id) => ({
-  id, sku_id: SKU_CATALOG[(id * 3) % 8].id, yaw: id % 3 === 0 ? 90 : 0,
+  id, sku_id: SKU_CATALOG[(id * 3) % 8].id, yaw: id % 3 === 0 ? 90 : 0, on_floor: true,
 }));
 
 /** The deck plus the 2" a case may overhang it, at floor level and up. */

@@ -5,7 +5,6 @@
 .storage-modal button { min-height: 48px; }
 .storage-controls { display: flex; gap: 6px; flex-wrap: wrap; }
 .hud-command .storage-controls { margin-left: auto; }
-.result-modal .storage-controls { margin-top: 12px; }
 .personal-bests { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 18px; }
 .personal-bests section { background: #142334; border: 1px solid #33465b; padding: 14px; border-radius: 8px; }
 .personal-bests h3 { margin: 0 0 8px; font-size: 14px; color: #76d3dc; }

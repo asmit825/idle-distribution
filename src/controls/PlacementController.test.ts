@@ -3,13 +3,13 @@ import { createCanvas } from '@napi-rs/canvas';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Box3, Color, Group, PerspectiveCamera, Vector3 } from 'three';
 import { Engine, initSync } from '../../pkg/pallet_sim';
-import { conveyorPickBay } from '../rendering/ConveyorBelt';
+import { conveyorPickBays } from '../rendering/ConveyorBelt';
 import { Carton } from '../rendering/BoxMesh';
 import { disposeBoxMaterials } from '../rendering/materials';
-import { toScene } from '../scene/coordinates';
+import { placedCaseBox, toScene } from '../scene/coordinates';
 import { stageFloor } from '../game/FloorStaging';
-import { STAGING_BAYS, type StagingBay } from '../scene/staging';
-import type { PalletEngine } from '../types/engine';
+import { STAGING_BAYS, stagingBay, type StagingBay } from '../scene/staging';
+import type { EngineSnapshot, PalletEngine } from '../types/engine';
 import { PlacementController, type PlacementEvent } from './PlacementController';
 
 const VIEWPORT = { width: 1280, height: 800 };
@@ -92,6 +92,7 @@ it('commits a drop in the green and refills the bay', () => {
   expect(controller.ghost.visible).toBe(false);
   expect(events.map(event => event.type)).toEqual(['pick', 'placed']);
   expect(events[1]).toMatchObject({ type: 'placed', snapshot: { cases_placed: 1 } });
+  expect(controller.selected).toEqual({ kind: 'case', id: engine.get_snapshot().placed_cases[0].id });
 });
 
 it('cancels a drop in the red, returning the case to its bay', () => {
@@ -148,16 +149,102 @@ function screenOfBay(skuId: string) {
   return { x: (top.x + 1) / 2 * VIEWPORT.width, y: (1 - top.y) / 2 * VIEWPORT.height };
 }
 
-it('hit-tests floor cartons as draggable and placed cases as selectable only', () => {
+it('hit-tests floor cartons and exposed placed cases as draggable', () => {
   expect(controller.hitTest(screenOfBay('SKU-LT'))).toEqual({ target: { kind: 'bay', bay: bay('SKU-LT') }, draggable: true });
   expect(controller.hitTest(screenOfBay('SKU-HC'))).toEqual({ target: { kind: 'bay', bay: bay('SKU-HC') }, draggable: true });
   expect(controller.hitTest(screenOf(24, 20))).toBeUndefined();
   place('SKU-HF', 24, 20);
   const { id } = engine.get_snapshot().placed_cases[0];
+  expect(controller.hitTest(screenOf(24, 20, 8))).toEqual({ target: { kind: 'case', id }, draggable: true });
+  controller.lock();
   expect(controller.hitTest(screenOf(24, 20, 8))).toEqual({ target: { kind: 'case', id }, draggable: false });
 });
 
-it('selects a tapped case, deselects on a second tap or a tap on nothing', () => {
+it('hit-tests a case under others as the top case of its stack', () => {
+  place('SKU-HF', 24, 20); // 16" × 24" × 8", pressed below on its +X face
+  place('SKU-MQ', 24, 20, 8); // 12" × 12" on its top
+  const [base, top] = engine.get_snapshot().placed_cases;
+  expect(controller.hitTest(screenOf(32, 20, 4))).toEqual({ target: { kind: 'case', id: top.id }, draggable: true });
+  expect(base.id).not.toBe(top.id);
+});
+
+it('keeps the case it just placed selected, so nudges fine-tune it through the engine', () => {
+  camera.position.set(0, 80, 80);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+  place('SKU-HF', 24, 20);
+  const { id } = engine.get_snapshot().placed_cases[0];
+  expect(controller.selected).toEqual({ kind: 'case', id });
+  controller.nudge('right');
+  controller.nudge('up');
+  expect(engine.get_snapshot().placed_cases).toMatchObject([{ id, grid_x: 9, grid_y: 3, elevation_z: 0 }]);
+  expect(events.slice(-2).map(event => event.type)).toEqual(['moved', 'moved']);
+  expect(controller.selected).toEqual({ kind: 'case', id });
+  const outline = new Box3().setFromObject(scene.getObjectByName('selection')!);
+  expect(outline.containsBox(placedBox(id))).toBe(true);
+});
+
+it('refuses a nudge that would break a rule, leaving the case where it was', () => {
+  camera.position.set(0, 80, 80);
+  camera.lookAt(0, 0, 0);
+  camera.updateMatrixWorld();
+  place('SKU-HF', 8, 20); // x 0–16
+  controller.nudge('left'); // a 2″ overhang is allowed
+  controller.nudge('left'); // 4″ is not
+  expect(engine.get_snapshot().placed_cases).toMatchObject([{ grid_x: -1 }]);
+  expect(events.at(-1)).toEqual({ type: 'blocked', sku: bay('SKU-HF').sku, rejection: 'excess_overhang' });
+});
+
+it('rotates and flips the selected placed case about its center', () => {
+  place('SKU-HF', 24, 20); // 16" × 24" at grid 8, 4
+  controller.rotate();
+  expect(engine.get_snapshot().placed_cases).toMatchObject([{ rotation_yaw: 0, flipped: false, grid_x: 6, grid_y: 6 }]);
+  controller.flip(); // 24" × 8", 16" tall
+  expect(engine.get_snapshot().placed_cases).toMatchObject([{ rotation_yaw: 0, flipped: true, grid_x: 6, grid_y: 8 }]);
+  controller.confirm();
+  expect(controller.selected).toBeUndefined();
+  controller.rotate(); // nothing selected or held
+  expect(engine.get_snapshot().placed_cases).toMatchObject([{ rotation_yaw: 0 }]);
+});
+
+it('lifts an exposed placed case and drops it somewhere else, keeping its id', () => {
+  place('SKU-HF', 24, 20); // x 16–32, y 8–32
+  const { id } = engine.get_snapshot().placed_cases[0];
+  controller.dragStart({ kind: 'case', id });
+  expect(events.at(-1)).toEqual({ type: 'lift', sku: bay('SKU-HF').sku, id });
+  expect(controller.held).toMatchObject({ source: { kind: 'case', id }, orientation: { yaw: 90, flipped: false } });
+  // The case no longer counts while lifted: aiming at its own spot lands on the deck.
+  controller.dragMove(screenOf(26, 20));
+  expect(controller.held!.aim).toMatchObject({ gridX: 9, gridY: 4, validation: { status: 'valid', elevation_in: 0 } });
+  controller.dragMove(screenOf(12, 20));
+  expect(controller.drop()).toBe('moved');
+  expect(engine.get_snapshot().placed_cases).toMatchObject([{ id, grid_x: 2, grid_y: 4 }]);
+  expect(events.at(-1)).toMatchObject({ type: 'moved', placed: { id, grid_x: 2 } });
+  expect(controller.selected).toEqual({ kind: 'case', id });
+});
+
+it('puts a lifted case back where it was if dropped in the red, and takes it off the pallet if dropped off the deck', () => {
+  place('SKU-HF', 24, 20);
+  const { id } = engine.get_snapshot().placed_cases[0];
+  controller.dragStart({ kind: 'case', id });
+  controller.dragMove(screenOf(4, 20)); // 4″ over the edge
+  expect(controller.drop()).toBe('returned');
+  expect(events.at(-1)).toEqual({ type: 'returned', sku: bay('SKU-HF').sku, rejection: 'excess_overhang', id });
+  expect(engine.get_snapshot().placed_cases).toMatchObject([{ id, grid_x: 8, grid_y: 4 }]);
+
+  controller.dragStart({ kind: 'case', id });
+  controller.dragMove(screenOf(-40, 20));
+  expect(controller.drop()).toBe('removed');
+  expect(engine.get_snapshot().cases_placed).toBe(0);
+  expect(events.at(-1)).toMatchObject({ type: 'removed', id });
+});
+
+/** The scene volume of placed case `id`. */
+function placedBox(id: number) {
+  return placedCaseBox((engine as PalletEngine).get_snapshot().placed_cases.find(placed => placed.id === id)!);
+}
+
+it('selects a tapped case, deselects on a tap on nothing or a second tap on a floor carton', () => {
   const hc = { kind: 'bay', bay: bay('SKU-HC') } as const;
   controller.tap(hc);
   expect(controller.selected).toEqual(hc);
@@ -166,11 +253,14 @@ it('selects a tapped case, deselects on a second tap or a tap on nothing', () =>
   controller.tap(hc);
   controller.tap(undefined);
   expect(controller.selected).toBeUndefined();
-  place('SKU-HF', 24, 20);
+  place('SKU-HF', 24, 20); // selected as it lands
   const placed = { kind: 'case', id: engine.get_snapshot().placed_cases[0].id } as const;
-  controller.tap(placed);
   expect(controller.selected).toEqual(placed);
-  expect(events.filter(event => event.type === 'select').map(event => event.target)).toEqual([hc, undefined, hc, undefined, placed]);
+  controller.tap(placed); // a placed case stays selected
+  expect(controller.selected).toEqual(placed);
+  controller.tap(undefined);
+  expect(controller.selected).toBeUndefined();
+  expect(events.filter(event => event.type === 'select').map(event => event.target)).toEqual([hc, undefined, hc, undefined, placed, undefined]);
 });
 
 /** Visible cartons in the scene: SKU and footprint bounds, rounded to 1/1000". */
@@ -240,6 +330,8 @@ it('treats only an off-pallet anchor as red; other engine failures surface', () 
     get_snapshot: () => engine.get_snapshot(),
     commit_placement: () => { throw new Error('unused'); },
     validate_placement: () => { throw new Error('unknown SKU SKU-XX'); },
+    validate_move: () => { throw new Error('unused'); },
+    move_placement: () => { throw new Error('unused'); },
   };
   controller = new PlacementController({ engine: failing, camera, parent: scene, viewport: () => VIEWPORT });
   controller.dragStart({ kind: 'bay', bay: bay('SKU-HF') });
@@ -279,7 +371,7 @@ describe('on a Mode 1 floor', () => {
   });
 
   it('starts the clock on the first pick and empties each bay once its case is placed', () => {
-    expect(visibleCartons()).toHaveLength(100);
+    expect(visibleCartons()).toHaveLength(25);
     const light = first('SKU-LT');
     expect(phase()).toBe('staged');
     controller.dragStart({ kind: 'bay', bay: light });
@@ -287,8 +379,8 @@ describe('on a Mode 1 floor', () => {
     expect(events[0]).toEqual({ type: 'pick', sku: light.sku, bay: light });
     controller.dragMove(screenOf(24, 20));
     expect(controller.drop()).toBe('placed');
-    expect(engine.get_snapshot().mode1!.cases_on_floor).toBe(99);
-    expect(visibleCartons()).toHaveLength(99);
+    expect(engine.get_snapshot().mode1!.cases_on_floor).toBe(24);
+    expect(visibleCartons()).toHaveLength(24); // placed cases render from the snapshot
     expect(controller.hitTest(screenOfCarton(light))?.target).not.toEqual({ kind: 'bay', bay: light });
 
     // Its bay stays empty: there is nothing left to pick there.
@@ -296,19 +388,20 @@ describe('on a Mode 1 floor', () => {
     expect(controller.held).toBeUndefined();
   });
 
-  it('shows a heavy case over a light one in red and returns it to the floor on release', () => {
+  it('shows a heavy case over a light one in yellow and lets it land, crushing the light one', () => {
     controller.dragStart({ kind: 'bay', bay: first('SKU-LT') });
     controller.dragMove(screenOf(24, 20));
     controller.drop();
     const heavy = first('SKU-HC');
     controller.dragStart({ kind: 'bay', bay: heavy });
     controller.dragMove(screenOf(24, 20, 15)); // the Light Tall's top
-    expect(controller.held!.aim!.validation).toMatchObject({ status: 'invalid', rejection: 'heavy_on_light', elevation_in: 15 });
-    expect(controller.ghost.status).toBe('invalid');
-    expect(controller.drop()).toBe('returned');
-    expect(events.at(-1)).toEqual({ type: 'returned', sku: heavy.sku, rejection: 'heavy_on_light' });
-    expect(visibleCartons()).toHaveLength(99);
-    expect(controller.hitTest(screenOfCarton(heavy))).toEqual({ target: { kind: 'bay', bay: heavy }, draggable: true });
+    expect(controller.held!.aim!.validation).toMatchObject({ status: 'warning', rejection: null, elevation_in: 15, would_crush: 1 });
+    expect(controller.ghost.status).toBe('warning');
+    expect(controller.drop()).toBe('placed');
+    const snapshot: EngineSnapshot = engine.get_snapshot();
+    expect(snapshot.placed_cases.map(placed => [placed.sku_id, placed.crushed])).toEqual([['SKU-LT', true], ['SKU-HC', false]]);
+    expect(snapshot.crush_penalty).toBeGreaterThan(0);
+    expect(visibleCartons()).toHaveLength(23);
   });
 
   it('returns the held case if the shift ran out before the drop', () => {
@@ -327,7 +420,7 @@ describe('on a Mode 1 floor', () => {
     controller.dragStart({ kind: 'bay', bay: first('SKU-MQ') });
     expect(controller.held).toBeUndefined();
     expect(events).toEqual([]);
-    expect(visibleCartons()).toHaveLength(100);
+    expect(visibleCartons()).toHaveLength(25);
   });
 
   it('locking cancels the held case and leaves the floor to look at, not pick', () => {
@@ -338,7 +431,7 @@ describe('on a Mode 1 floor', () => {
     expect(controller.held).toBeUndefined();
     expect(controller.ghost.visible).toBe(false);
     expect(events.at(-1)).toEqual({ type: 'returned', sku: heavy.sku, rejection: null });
-    expect(visibleCartons()).toHaveLength(100);
+    expect(visibleCartons()).toHaveLength(25);
     expect(controller.hitTest(screenOfCarton(heavy))).toEqual({ target: { kind: 'bay', bay: heavy }, draggable: false });
     controller.dragStart({ kind: 'bay', bay: heavy });
     expect(controller.held).toBeUndefined();
@@ -415,32 +508,46 @@ it('returns a removed exposed case to the Mode 1 floor and updates the authorita
   controller.dragStart({ kind: 'bay', bay: target });
   controller.dragMove(screenOf(24, 20));
   controller.drop();
-  const id = engine.get_snapshot().placed_cases[0].id;
-  controller.tap({ kind: 'case', id });
+  // The dropped case stays selected.
   controller.remove();
   expect(engine.get_snapshot()).toMatchObject({ cases_placed: 0, total_weight_lbs: 0, max_height_inches: 0,
-    cog_inches: [24, 20], mode1: { cases_on_floor: 100 } });
+    cog_inches: [24, 20], mode1: { cases_on_floor: 25 } });
   expect(controller.bays.some(bay => bay.id === target.id)).toBe(true);
   controller.dragStart({ kind: 'bay', bay: target });
   controller.dragMove(screenOf(24, 20));
   expect(controller.drop()).toBe('placed');
   engine.ship(200);
-  controller.tap({ kind: 'case', id: engine.get_snapshot().placed_cases[0].id });
   expect(() => controller.remove()).toThrow(/over/);
   expect(engine.get_snapshot().cases_placed).toBe(1);
 });
 
 
+it('keeps a drag going when the floor changes around the held carton, and drops it as usual', () => {
+  controller.dragStart({ kind: 'bay', bay: bay('SKU-HF') });
+  controller.dragMove(screenOf(24, 20));
+  // A new list with the held carton still in it, as when another carton reaches the pick run.
+  const restaged = STAGING_BAYS.map(({ id, sku, yaw, position }) => stagingBay(id, sku, yaw, position.x + 1, position.z));
+  controller.setBays(restaged);
+  expect(controller.held).toMatchObject({ source: { kind: 'bay', bay: restaged.find(({ sku }) => sku.id === 'SKU-HF') } });
+  expect(events.map(event => event.type)).toEqual(['pick']);
+  expect(controller.drop()).toBe('placed');
+  // Without it, the drag is cancelled.
+  controller.dragStart({ kind: 'bay', bay: restaged[0] });
+  controller.setBays(restaged.slice(1));
+  expect(controller.held).toBeUndefined();
+  expect(events.at(-1)).toMatchObject({ type: 'returned' });
+});
+
 it('removes only exposed Mode 2 cases without reordering the FIFO and refuses removal after Estop', () => {
   controller.dispose();
   engine.start_mode2(2149n, 0);
   engine.tick_mode2(7000);
-  const first = conveyorPickBay(engine.get_snapshot().mode2.queue[0]);
+  const [first] = conveyorPickBays(engine.get_snapshot().mode2);
   controller = new PlacementController({ engine, camera, parent: scene, viewport: () => VIEWPORT, bays: [first], refill: false,
     pick: bay => { engine.pick_case(bay.id, 7000); return true; } });
   controller.dragStart({ kind: 'bay', bay: first });
   controller.dragMove(screenOf(24, 20)); controller.drop();
-  const second = conveyorPickBay(engine.get_snapshot().mode2.queue[0]);
+  const [second] = conveyorPickBays(engine.get_snapshot().mode2);
   controller.setBays([second]);
   controller.dragStart({ kind: 'bay', bay: second });
   controller.dragMove(screenOf(24, 20, 15)); controller.drop();

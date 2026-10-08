@@ -18,13 +18,14 @@ function capture(snapshot: EngineSnapshot): RoundRecord {
   return {
     id: uuid(), timestamp: new Date().toISOString(),
     mode: shift ? 'free_staging_100' : 'conveyor_diversion', seed: shift?.seed ?? conveyor!.seed,
-    duration_ms: shift ? 60000 - shift.time_remaining_ms : conveyor!.elapsed_ms,
+    duration_ms: shift ? shift.elapsed_ms : conveyor!.elapsed_ms,
     cases_placed: snapshot.cases_placed, total_weight_lbs: snapshot.total_weight_lbs,
     volume_utilization_pct: snapshot.volume_utilization_pct, stability_index_pct: snapshot.quality_pct,
     quality_pct: snapshot.quality_pct, composite_score: snapshot.composite_score, grade: snapshot.grade,
     crush_count: snapshot.crushed_count, overhang_inches: snapshot.max_overhang_inches,
-    end_reason: shift?.end_reason ?? conveyor!.end_reason!, final_score: shift?.final_score ?? snapshot.composite_score,
+    end_reason: shift?.end_reason ?? conveyor!.end_reason!, final_score: shift?.final_score ?? conveyor?.final_score ?? snapshot.composite_score,
     ...(conveyor ? { diversions_count: conveyor.diversions_count, estop_triggered: conveyor.end_reason === 'estop' } : {}),
+    ...((shift ?? conveyor)!.sandbox ? { sandbox: true as const } : {}),
     pallet_snapshot: snapshot.placed_cases.map(({ load_lbs: _load, ...placed }) => ({ ...placed, id: String(placed.id) })),
   };
 }

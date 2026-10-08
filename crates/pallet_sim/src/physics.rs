@@ -4,11 +4,10 @@ use crate::grid::{
     Placement, Rect, Rejection, Status, Validation, CEILING_IN, MAX_SOFT_OVERHANG_IN,
 };
 
-/// More than 3/10 of a base over air and the case tips off (SPEC-01 §2.3.3). Compared in exact
-/// integer area, so a base exactly 30% unsupported is allowed.
-const MAX_UNSUPPORTED: (i64, i64) = (3, 10);
 /// Pro-rata shares carry float rounding; a load this close to capacity does not crush.
 const LOAD_TOLERANCE_LBS: f64 = 1e-6;
+/// A load bearing down this close to the edge of its support balances on a knife edge, and tips.
+const TIP_TOLERANCE_IN: f64 = 1e-9;
 
 pub type CaseId = u32;
 
@@ -22,6 +21,8 @@ pub struct PlacedCase {
     pub supports: Vec<Support>,
     /// Cumulative top-load from everything resting on it, directly or indirectly.
     pub load_lbs: f64,
+    /// The heaviest top-load it has ever carried. Damage is permanent, so this never drops.
+    pub peak_load_lbs: f64,
     pub crushed: bool,
 }
 
@@ -30,13 +31,19 @@ impl PlacedCase {
         self.elevation_in + self.placement.height()
     }
 
+    /// How far its peak load went past its rating, as a fraction of the rating. 0 if it never did.
+    pub fn overload(&self) -> f64 {
+        let capacity = f64::from(self.placement.sku.top_load_capacity_lbs);
+        ((self.peak_load_lbs - capacity) / capacity).max(0.0)
+    }
+
     /// Whether `load_lbs` exceeds this case's rated top-load capacity.
     fn crushes_under(&self, load_lbs: f64) -> bool {
         load_lbs > f64::from(self.placement.sku.top_load_capacity_lbs) + LOAD_TOLERANCE_LBS
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct Pallet {
     cases: Vec<PlacedCase>,
     next_id: CaseId,
@@ -56,6 +63,23 @@ pub enum RemoveError {
     Supporting,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MoveError {
+    NotFound,
+    /// Another case rests on it; only exposed cases move.
+    Supporting,
+    Rejected(Rejection),
+}
+
+impl From<RemoveError> for MoveError {
+    fn from(error: RemoveError) -> MoveError {
+        match error {
+            RemoveError::NotFound => MoveError::NotFound,
+            RemoveError::Supporting => MoveError::Supporting,
+        }
+    }
+}
+
 impl Pallet {
     pub fn cases(&self) -> &[PlacedCase] {
         &self.cases
@@ -69,31 +93,36 @@ impl Pallet {
         let footprint = placement.footprint();
         let elevation_in = self.settle(&footprint);
         let overhang_in = footprint.overhang();
-        let supported_area: i64 = if elevation_in == 0 {
-            footprint.overlap_area(&Rect::DECK)
-        } else {
-            self.cases
-                .iter()
-                .filter(|case| case.top_in() == elevation_in)
-                .map(|case| case.footprint.overlap_area(&footprint))
-                .sum()
-        };
-        let (area, unsupported_area) = (footprint.area(), footprint.area() - supported_area);
-        let unsupported_fraction = unsupported_area as f64 / area as f64;
-        let rejection = if elevation_in + placement.height() > CEILING_IN {
+        let supported_area: i64 = self
+            .contacts(&footprint, elevation_in)
+            .iter()
+            .map(Rect::area)
+            .sum();
+        let area = footprint.area();
+        let unsupported_fraction = (area - supported_area) as f64 / area as f64;
+        let mut rejection = if elevation_in + placement.height() > CEILING_IN {
             Some(Rejection::AboveCeiling)
         } else if overhang_in > MAX_SOFT_OVERHANG_IN {
             Some(Rejection::ExcessOverhang)
-        } else if unsupported_area * MAX_UNSUPPORTED.1 > area * MAX_UNSUPPORTED.0 {
-            Some(Rejection::Unsupported)
         } else {
             None
         };
-        let would_crush = if rejection.is_some() {
-            0
-        } else {
-            self.would_crush(placement, &footprint, elevation_in)
-        };
+        let mut would_crush = 0;
+        if rejection.is_none() {
+            // Judge the stack with the case in it. The new id is the highest, so it lands last.
+            let mut trial = self.clone();
+            trial.insert(self.next_id, *placement, elevation_in, 0.0);
+            if !trial.is_stable() {
+                rejection = Some(Rejection::Unsupported);
+            } else {
+                would_crush = trial
+                    .cases
+                    .iter()
+                    .zip(&self.cases)
+                    .filter(|(after, before)| after.crushed && !before.crushed)
+                    .count() as u32;
+            }
+        }
         let status = match rejection {
             Some(_) => Status::Invalid,
             None if overhang_in > 0 || would_crush > 0 => Status::Warning,
@@ -116,19 +145,37 @@ impl Pallet {
         }
         let id = self.next_id;
         self.next_id += 1;
-        let footprint = placement.footprint();
-        let supports = self.supports(&footprint, check.elevation_in);
-        self.cases.push(PlacedCase {
-            id,
-            placement,
-            footprint,
-            elevation_in: check.elevation_in,
-            supports,
-            load_lbs: 0.0,
-            crushed: false,
-        });
-        self.solve_loads();
+        self.insert(id, placement, check.elevation_in, 0.0);
         Ok(id)
+    }
+
+    /// The pallet with exposed case `id` lifted off, as it would be mid-move.
+    pub fn without(&self, id: CaseId) -> Result<Pallet, RemoveError> {
+        let mut pallet = self.clone();
+        pallet.remove(id)?;
+        Ok(pallet)
+    }
+
+    /// Where exposed case `id` would settle at `placement`, judged as if it were already lifted.
+    pub fn validate_move(
+        &self,
+        id: CaseId,
+        placement: &Placement,
+    ) -> Result<Validation, RemoveError> {
+        Ok(self.without(id)?.validate(placement))
+    }
+
+    /// Moves exposed case `id` to `placement`. It keeps its id, and any crush damage it took.
+    pub fn relocate(&mut self, id: CaseId, placement: Placement) -> Result<(), MoveError> {
+        let peak_load_lbs = self.case(id).ok_or(MoveError::NotFound)?.peak_load_lbs;
+        let mut lifted = self.without(id)?;
+        let check = lifted.validate(&placement);
+        if let Some(rejection) = check.rejection {
+            return Err(MoveError::Rejected(rejection));
+        }
+        lifted.insert(id, placement, check.elevation_in, peak_load_lbs);
+        *self = lifted;
+        Ok(())
     }
 
     pub fn remove(&mut self, id: CaseId) -> Result<(), RemoveError> {
@@ -143,6 +190,76 @@ impl Pallet {
         self.cases.remove(index);
         self.solve_loads();
         Ok(())
+    }
+
+    /// Adds a case at its id-ordered position, then re-solves every load.
+    fn insert(&mut self, id: CaseId, placement: Placement, elevation_in: i32, peak_load_lbs: f64) {
+        let footprint = placement.footprint();
+        let supports = self.supports(&footprint, elevation_in);
+        let index = self.cases.partition_point(|case| case.id < id);
+        self.cases.insert(
+            index,
+            PlacedCase {
+                id,
+                placement,
+                footprint,
+                elevation_in,
+                supports,
+                load_lbs: 0.0,
+                peak_load_lbs,
+                crushed: false,
+            },
+        );
+        self.solve_loads();
+    }
+
+    /// Whether every case stays put (SPEC-01 §2.3.3). Each case bears down at the balance point
+    /// of its own weight and everything it carries. That point must sit strictly inside the
+    /// outline of what holds it up, the convex hull of its contact patches, or the case tips.
+    /// A case may hang well past the one beneath it, so long as it balances, but weight piled
+    /// on an overhanging end can tip the case under it.
+    pub fn is_stable(&self) -> bool {
+        // Downward force carried from above, and its moment about the origin.
+        let mut carried = vec![(0.0, 0.0, 0.0); self.cases.len()];
+        for index in self.top_down() {
+            let case = &self.cases[index];
+            let weight = f64::from(case.placement.sku.weight_lbs);
+            let (cx, cy) = case.footprint.center();
+            let (load, moment_x, moment_y) = carried[index];
+            let force = weight + load;
+            let balance = (
+                (weight * cx + moment_x) / force,
+                (weight * cy + moment_y) / force,
+            );
+            if !hull_contains(&self.contacts(&case.footprint, case.elevation_in), balance) {
+                return false;
+            }
+            // Each support takes its pro-rata share at the point of its patch nearest the
+            // balance point: exactly the balance point when the case rests on one support.
+            for support in &case.supports {
+                let below = self.index_of(support.case).unwrap();
+                let patch = self.cases[below]
+                    .footprint
+                    .intersection(&case.footprint)
+                    .unwrap();
+                let (x, y) = patch.clamp(balance);
+                let share = force * support.share;
+                let entry = &mut carried[below];
+                *entry = (entry.0 + share, entry.1 + share * x, entry.2 + share * y);
+            }
+        }
+        true
+    }
+
+    /// Where a base over `footprint` at `elevation` touches the deck or the tops beneath it.
+    fn contacts(&self, footprint: &Rect, elevation: i32) -> Vec<Rect> {
+        if elevation == 0 {
+            footprint.intersection(&Rect::DECK).into_iter().collect()
+        } else {
+            self.beneath(footprint, elevation)
+                .filter_map(|case| case.footprint.intersection(footprint))
+                .collect()
+        }
     }
 
     /// The cases a base at `elevation` over `footprint` would rest on directly. None on the deck.
@@ -175,49 +292,29 @@ impl Pallet {
             .collect()
     }
 
-    /// Intact cases whose capacity the candidate's weight would push past. The load model is
-    /// linear, so only the candidate's own weight needs propagating.
-    fn would_crush(&self, placement: &Placement, footprint: &Rect, elevation_in: i32) -> u32 {
-        let mut added = vec![0.0; self.cases.len()];
-        for support in self.supports(footprint, elevation_in) {
-            added[self.index_of(support.case).unwrap()] +=
-                f64::from(placement.sku.weight_lbs) * support.share;
-        }
-        self.propagate(&mut added, false);
-        self.cases
-            .iter()
-            .zip(added)
-            .filter(|(case, extra)| !case.crushed && case.crushes_under(case.load_lbs + extra))
-            .count() as u32
-    }
-
-    /// Passes load down through the supports, top-down. Each case transmits what it receives,
-    /// plus its own weight when `with_weight`. Supports always sit lower, so a case's total
-    /// is final before it passes it on.
-    fn propagate(&self, loads: &mut [f64], with_weight: bool) {
+    /// Case indices from the highest base down. Supports always sit lower, so a case's carried
+    /// load is final before it passes it on.
+    fn top_down(&self) -> Vec<usize> {
         let mut order: Vec<usize> = (0..self.cases.len()).collect();
         order.sort_by_key(|&index| std::cmp::Reverse(self.cases[index].elevation_in));
-        for index in order {
+        order
+    }
+
+    /// Recomputes every case's cumulative top-load (SPEC-01 §2.3.1): each passes its weight
+    /// plus what it carries down through its supports. Crushing is permanent.
+    fn solve_loads(&mut self) {
+        let mut loads = vec![0.0; self.cases.len()];
+        for index in self.top_down() {
             let case = &self.cases[index];
-            let own = if with_weight {
-                f64::from(case.placement.sku.weight_lbs)
-            } else {
-                0.0
-            };
-            let downward = own + loads[index];
+            let downward = f64::from(case.placement.sku.weight_lbs) + loads[index];
             for support in &case.supports {
                 loads[self.index_of(support.case).unwrap()] += downward * support.share;
             }
         }
-    }
-
-    /// Recomputes every case's cumulative top-load (SPEC-01 §2.3.1). Crushing is permanent.
-    fn solve_loads(&mut self) {
-        let mut loads = vec![0.0; self.cases.len()];
-        self.propagate(&mut loads, true);
         for (case, load) in self.cases.iter_mut().zip(loads) {
             case.load_lbs = load;
-            case.crushed |= case.crushes_under(load);
+            case.peak_load_lbs = case.peak_load_lbs.max(load);
+            case.crushed = case.crushes_under(case.peak_load_lbs);
         }
     }
 
@@ -235,4 +332,38 @@ impl Pallet {
             .max()
             .unwrap_or(0)
     }
+}
+
+/// Whether `point` lies strictly inside the convex hull of `patches`.
+fn hull_contains(patches: &[Rect], (px, py): (f64, f64)) -> bool {
+    let mut corners: Vec<(i64, i64)> = patches
+        .iter()
+        .flat_map(Rect::corners)
+        .map(|(x, y)| (i64::from(x), i64::from(y)))
+        .collect();
+    corners.sort_unstable();
+    corners.dedup();
+    let cross = |o: (i64, i64), a: (i64, i64), b: (i64, i64)| {
+        (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0)
+    };
+    // Andrew's monotone chain: the lower half, then the upper, counter-clockwise.
+    let mut hull: Vec<(i64, i64)> = Vec::with_capacity(corners.len() + 1);
+    for half in [corners.clone(), corners.into_iter().rev().collect()] {
+        let start = hull.len();
+        for point in half {
+            while hull.len() >= start + 2
+                && cross(hull[hull.len() - 2], hull[hull.len() - 1], point) <= 0
+            {
+                hull.pop();
+            }
+            hull.push(point);
+        }
+        // Each half ends where the other begins.
+        hull.pop();
+    }
+    (0..hull.len()).all(|i| {
+        let (a, b) = (hull[i], hull[(i + 1) % hull.len()]);
+        let (ax, ay) = (a.0 as f64, a.1 as f64);
+        (b.0 as f64 - ax) * (py - ay) - (b.1 as f64 - ay) * (px - ax) > TIP_TOLERANCE_IN
+    })
 }

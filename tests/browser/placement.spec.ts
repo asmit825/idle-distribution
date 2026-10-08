@@ -32,7 +32,7 @@ test('drags floor cartons onto the pallet with a mouse, rotating, stacking, and 
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto('/?seed=42');
+  await page.goto('/?mode=1&seed=42');
   await expect.poll(() => page.evaluate(() => !!window.__palletTest)).toBe(true);
   const status = page.locator('.placement-status');
   const rotate = page.getByRole('button', { name: /Rotate/ });
@@ -45,11 +45,31 @@ test('drags floor cartons onto the pallet with a mouse, rotating, stacking, and 
     await page.keyboard.press('r');
   }, 90);
   await expect(status).toHaveText('Placed Heavy Flat, 24″ × 16″, at 0″. 1 case on the pallet.');
+
+  // It stays selected: arrow keys fine-tune it 2″ at a time, and Enter accepts it.
+  await expect(rotate).toBeEnabled();
+  await page.keyboard.press('ArrowRight');
+  await expect(status).not.toHaveText('Moved Heavy Flat to grid 6, 6, at 0″.');
+  await expect(status).toHaveText(/^Moved Heavy Flat to grid \d+, \d+, at 0″\.$/);
+  await page.keyboard.press('ArrowLeft');
+  await expect(status).toHaveText('Moved Heavy Flat to grid 6, 6, at 0″.');
+  await page.keyboard.press('Enter');
   await expect(rotate).toBeDisabled();
 
   // Aiming at the Heavy Flat's top stacks onto it.
   await drag(page, 'SKU-MQ', await deckPoint(page, 24, 20, 8));
   await expect(status).toHaveText('Placed Medium Square, 12″ × 12″, at 8″. 2 cases on the pallet.');
+
+  // A placed case can be picked up again and moved: off the Heavy Flat, onto the bare deck.
+  const top = await deckPoint(page, 24, 20, 18);
+  const clear = await deckPoint(page, 40, 34);
+  await page.mouse.move(top.x, top.y);
+  await page.mouse.down();
+  await page.mouse.move(clear.x, clear.y, { steps: 12 });
+  await expect(status).toHaveText('Holding Medium Square.');
+  await page.mouse.up();
+  await expect(status).toHaveText(/^Moved Medium Square to grid \d+, \d+, at 0″\.$/);
+  await expect(page.getByText('Cases placed').locator('xpath=following-sibling::dd[1]')).toHaveText('2');
 
   // Dropping far off the pallet is red: the carton goes back to its bay.
   await drag(page, 'SKU-LT', await deckPoint(page, -30, 20));

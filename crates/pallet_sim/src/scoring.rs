@@ -7,7 +7,11 @@ use serde::Serialize;
 use crate::grid::{CEILING_IN, PALLET_LENGTH_IN, PALLET_WIDTH_IN};
 use crate::physics::Pallet;
 
-const CRUSH_PENALTY_PCT: f64 = 15.0;
+/// The most one crushed case docks, once loaded to double its rating. Less overload docks
+/// proportionally less, so a heavy case on a light one costs more the heavier it is.
+const CRUSH_PENALTY_CAP_PCT: f64 = 15.0;
+/// Overload, as a fraction of the rating, that docks the full crush penalty.
+const FULL_CRUSH_OVERLOAD: f64 = 1.0;
 const OVERHANG_PENALTY_PCT_PER_IN: f64 = 5.0;
 /// Drift penalty ramps linearly to its cap at this distance from the deck center.
 const DRIFT_CAP_IN: f64 = 12.0;
@@ -103,7 +107,11 @@ pub fn evaluate(pallet: &Pallet) -> Score {
         .collect::<BTreeSet<_>>()
         .len();
 
-    let crush_penalty = CRUSH_PENALTY_PCT * f64::from(crushed_count);
+    let crush_penalty: f64 = cases
+        .iter()
+        .filter(|case| case.crushed)
+        .map(|case| CRUSH_PENALTY_CAP_PCT * (case.overload() / FULL_CRUSH_OVERLOAD).min(1.0))
+        .sum();
     let overhang_penalty = OVERHANG_PENALTY_PCT_PER_IN * f64::from(max_overhang_in);
     let drift_penalty =
         (cog_drift_in / DRIFT_CAP_IN * DRIFT_PENALTY_CAP_PCT).min(DRIFT_PENALTY_CAP_PCT);
@@ -127,6 +135,7 @@ pub fn evaluate(pallet: &Pallet) -> Score {
         interlock_bonus,
         quality_pct,
         composite_score: (cases.len() as f64 * quality_pct).round() as u32,
-        grade: Grade::from_quality(quality_pct),
+        // Nothing stacked is no work done, however flawless the empty deck.
+        grade: if cases.is_empty() { Grade::F } else { Grade::from_quality(quality_pct) },
     }
 }

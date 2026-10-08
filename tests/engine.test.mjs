@@ -32,9 +32,10 @@ test('commits placements and reports an authoritative snapshot', () => {
     assert.equal(snapshot.volume_utilization_pct, (16 * 12 * 15 + 16 * 16 * 12) / (48 * 40 * 60) * 100);
     assert.equal(snapshot.max_height_inches, 27);
     assert.equal(snapshot.crushed_count, 1);
-    assert.equal(snapshot.quality_pct, 85);
-    assert.equal(snapshot.composite_score, 170);
-    assert.equal(snapshot.grade, 'A');
+    assert.equal(snapshot.crush_penalty, 7.5); // 45 lbs on a 30 lb rating: 50% over, half the 15% cap
+    assert.equal(snapshot.quality_pct, 92.5);
+    assert.equal(snapshot.composite_score, 185);
+    assert.equal(snapshot.grade, 'S');
     assert.deepEqual(snapshot.placed_cases[1], {
       id: 1, sku_id: 'SKU-HC', grid_x: 8, grid_y: 6, elevation_z: 15, rotation_yaw: 90,
       flipped: false, crushed: false, weight_lbs: 45, load_lbs: 0,
@@ -79,19 +80,20 @@ test('validate_placement averages under 0.2 ms on a full 100-case pallet, with a
   });
 });
 
-test('Mode 1 stages a seeded 100-case floor and holds the shift clock until the first pick', () => {
+test('Mode 1 stages the first 25-case wave of a seeded floor and holds the shift clock until the first pick', () => {
   withEngine(engine => {
-    assert.equal(engine.tick(1_000), null, 'the sandbox has no shift');
+    assert.equal(engine.tick(1_000), null, 'free placement has no shift');
     assert.deepEqual(engine.floor_cases(), []);
     const staged = engine.start_mode1(42n);
     assert.equal(staged.cases_placed, 0);
     assert.deepEqual(staged.mode1, {
-      seed: '42', phase: 'staged', time_remaining_ms: 60_000, cases_on_floor: 100,
+      seed: '42', sandbox: false, phase: 'staged', time_remaining_ms: 60_000, elapsed_ms: 0, wave: 1, cases_on_floor: 25,
       end_reason: null, early_finish_bonus: null, final_score: null,
     });
     const floor = engine.floor_cases();
-    assert.equal(floor.length, 100);
-    assert.deepEqual(Object.keys(floor[0]), ['id', 'sku_id', 'yaw']);
+    assert.deepEqual(floor.map(c => c.id), [...Array(25).keys()]);
+    assert.deepEqual(Object.keys(floor[0]), ['id', 'sku_id', 'yaw', 'on_floor']);
+    assert.ok(floor.every(c => c.on_floor));
     withEngine(other => {
       other.start_mode1(42n);
       assert.deepEqual(other.floor_cases(), floor);
@@ -111,25 +113,35 @@ test('Mode 1 picks, places, rejects heavy-on-light, and ships through the engine
     const heavy = floor.find(c => c.sku_id === 'SKU-HC');
     engine.pick_case(light.id, 10_000);
     assert.deepEqual(engine.tick(20_000), {
-      seed: '42', phase: 'running', time_remaining_ms: 50_000, cases_on_floor: 100,
+      seed: '42', sandbox: false, phase: 'running', time_remaining_ms: 50_000, elapsed_ms: 10_000, wave: 1, cases_on_floor: 25,
       end_reason: null, early_finish_bonus: null, final_score: null,
     });
-    assert.equal(engine.commit_placement('SKU-LT', 0, 0, 0, false).mode1.cases_on_floor, 99);
+    assert.equal(engine.commit_placement('SKU-LT', 0, 0, 0, false).mode1.cases_on_floor, 24);
+    assert.equal(engine.floor_cases().find(c => c.id === light.id).on_floor, false);
     assert.throws(() => engine.pick_case(light.id, 21_000), /not on the floor/);
     // Ticket 07 allows an exposed carton to return to its original floor slot.
-    assert.equal(engine.remove_placement(0, 21_000).mode1.cases_on_floor, 100);
+    assert.equal(engine.remove_placement(0, 21_000).mode1.cases_on_floor, 25);
     engine.pick_case(light.id, 21_000);
     engine.commit_placement('SKU-LT', 0, 0, 0, false);
 
     engine.pick_case(heavy.id, 21_000);
+    // A heavy case may rest on a light one; it warns that the light one will crush.
     assert.deepEqual(engine.validate_placement('SKU-HC', 0, 0, 0, false), {
-      status: 'invalid', rejection: 'heavy_on_light', elevation_in: 15, overhang_in: 0, unsupported_fraction: 0.25, would_crush: 0,
+      status: 'warning', rejection: null, elevation_in: 15, overhang_in: 0, unsupported_fraction: 0.25, would_crush: 1,
     });
-    assert.throws(() => engine.commit_placement('SKU-HC', 0, 0, 0, false), /placement rejected: heavy_on_light/);
+
+    // A placed case moves, keeping its id; the floor is unchanged.
+    const [placed] = engine.get_snapshot().placed_cases;
+    assert.equal(engine.validate_move(placed.id, 0, 0, 0, false).status, 'valid'); // judged as if lifted
+    const moved = engine.move_placement(placed.id, 4, 2, 90, false, 21_500);
+    assert.deepEqual(moved.placed_cases.map(c => [c.id, c.grid_x, c.grid_y, c.rotation_yaw]), [[placed.id, 4, 2, 90]]);
+    assert.equal(moved.mode1.cases_on_floor, 24);
+    assert.throws(() => engine.move_placement(placed.id, -4, 2, 90, false, 21_500), /placement rejected: excess_overhang/);
+    assert.throws(() => engine.validate_move(99, 0, 0, 0, false), /no case 99/);
 
     const shipped = engine.ship(30_000);
     assert.deepEqual(shipped.mode1, {
-      seed: '42', phase: 'complete', time_remaining_ms: 40_000, cases_on_floor: 99,
+      seed: '42', sandbox: false, phase: 'complete', time_remaining_ms: 40_000, elapsed_ms: 20_000, wave: 1, cases_on_floor: 24,
       end_reason: 'shipped', early_finish_bonus: 0, final_score: 80,
     });
     assert.throws(() => engine.remove_placement(1, 31_000), /shift is over/);
@@ -141,29 +153,47 @@ test('Mode 1 picks, places, rejects heavy-on-light, and ships through the engine
   });
 });
 
-test('Mode 2 exposes FIFO arrivals and freezes the engine at the fifth diversion', () => {
+test('Mode 2 exposes FIFO arrivals, picks from the final run in any order, and freezes the engine at the fifth diversion', () => {
   withEngine(engine => {
     const initial = engine.start_mode2(42n, 1000);
     assert.equal(initial.mode1, null);
     assert.equal(initial.mode2.seed, '42');
     assert.equal(initial.mode2.arrival_interval_ms, 3500);
     assert.equal(engine.tick_mode2(4500).queue.length, 1);
-    const head = engine.tick_mode2(8000).queue[0];
-    assert.throws(() => engine.pick_case(head.id + 1, 8000), /pick spur/);
-    engine.pick_case(head.id, 8000);
-    const placed = engine.commit_placement(head.sku_id, 0, 0, 0, false);
+    const status = engine.tick_mode2(8000);
+    assert.equal(status.final_run, 2); // a Heavy Flat and a Light Tall, both beside the pallet
+    assert.throws(() => engine.pick_case(2, 8000), /final run/); // still on its way
+    // The second carton jumps the queue.
+    const second = status.queue[1];
+    engine.pick_case(second.id, 8000);
+    const placed = engine.commit_placement(second.sku_id, 0, 0, 0, false);
     assert.equal(placed.cases_placed, 1);
-    assert.equal(placed.mode2.queue.length, 1);
-    assert.equal(placed.mode2.queue[0].id, 1);
-    assert.throws(() => engine.ship(8000), /60/);
+    assert.deepEqual(placed.mode2.queue.map(c => c.id), [0]);
+    assert.equal(placed.mode2.can_ship, true); // a partial pallet may ship at any moment
     const stopped = engine.tick_mode2(1_000_000);
     assert.equal(stopped.end_reason, 'estop');
     assert.equal(stopped.diversions_count, 5);
-    assert.equal(stopped.queue.length, 10);
+    assert.equal(stopped.recirculating, 10);
     assert.throws(() => engine.pick_case(1, 1_000_000), /round is over/);
     assert.equal(engine.tick_mode2(2_000_000).elapsed_ms, stopped.elapsed_ms);
     assert.equal(engine.get_snapshot().cases_placed, 1);
     assert.equal(engine.start_mode1(42n).mode2, null);
     assert.equal(engine.tick_mode2(2_000_000), null);
+  });
+});
+
+test('sandbox rounds run without a clock or an Estop', () => {
+  withEngine(engine => {
+    const floor = engine.start_mode1(42n, true).mode1;
+    assert.equal(floor.sandbox, true);
+    engine.pick_case(0, 1_000);
+    const later = engine.tick(1_000 + 10 * 60_000);
+    assert.deepEqual([later.phase, later.time_remaining_ms, later.elapsed_ms], ['running', 60_000, 600_000]);
+
+    const line = engine.start_mode2(42n, 0, 'hard', true).mode2;
+    assert.equal(line.sandbox, true);
+    const status = engine.tick_mode2(1_000_000);
+    assert.deepEqual([status.signal, status.diversions_count, status.end_reason], ['red', 0, null]);
+    assert.equal(engine.start_mode2(42n, 0).mode2.sandbox, false);
   });
 });

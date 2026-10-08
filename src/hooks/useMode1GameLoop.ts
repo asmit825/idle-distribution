@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { COMPACT_QUERY } from '../components/hud/useCompact';
 import { stageFloor, type FloorLayout } from '../game/FloorStaging';
 import type { StagingBay } from '../scene/staging';
-import type { EngineSnapshot, FloorCase, ShiftEngine, ShiftStatus } from '../types/engine';
+import { WAVE_CASES, type EngineSnapshot, type FloorCase, type ShiftEngine, type ShiftStatus } from '../types/engine';
 
 const PORTRAIT_QUERY = '(orientation: portrait)';
 
@@ -12,13 +12,16 @@ export interface Mode1Game {
   shift: ShiftStatus;
   /** The pallet as it was evaluated, once the shift is complete. */
   result?: EngineSnapshot;
-  /** Every floor case where the current layout puts it, including those already placed. */
+  /**
+   * This wave's floor cases where the current layout puts them, including those already placed,
+   * plus any earlier case taken back off the pallet during the wave.
+   */
   floor: readonly StagingBay[];
   /** Lifts a floor case, starting the clock on the first pick; false once the shift is over. */
   pick(bay: StagingBay): boolean;
   /** Brings the clock up to the moment of a drop; false if the shift ended first. */
   canDrop(): boolean;
-  /** Reports a committed placement; placing the last floor case ends the shift. */
+  /** Reports a placement, move, or removal; clearing the floor brings the next wave or ends the shift. */
   placed(snapshot: EngineSnapshot): void;
   ship(): void;
   /** Starts a fresh shift with a new random seed. */
@@ -26,20 +29,20 @@ export interface Mode1Game {
 }
 
 /**
- * Mode 1's shift loop (SPEC-01 §5.1): starts a shift, stages its floor for the current layout,
- * and runs the countdown against the engine every animation frame once the first case is
+ * Mode 1's shift loop (SPEC-01 §5.1): starts a shift, stages each wave of its floor for the
+ * current layout, and runs the countdown against the engine every animation frame once the first case is
  * picked. The engine owns the rules and the clock; this keeps React in step with it. The HUD
- * re-renders when the clock's tenths or the phase change, not every frame.
- * Undefined until the first shift starts.
+ * re-renders when the clock's tenths or the phase change, not every frame. A sandbox shift
+ * counts up instead, with no end but shipping. Undefined until the first shift starts.
  */
-export function useMode1GameLoop(engine: ShiftEngine, { seed, layout }: { seed?: bigint; layout: FloorLayout }): Mode1Game | undefined {
+export function useMode1GameLoop(engine: ShiftEngine, { seed, layout, sandbox = false }: { seed?: bigint; layout: FloorLayout; sandbox?: boolean }): Mode1Game | undefined {
   const [state, setState] = useState<{ shiftCount: number; cases: FloorCase[]; shift: ShiftStatus }>();
 
   const start = useCallback((shiftSeed: bigint) => {
-    const shift = engine.start_mode1(shiftSeed).mode1!;
+    const shift = engine.start_mode1(shiftSeed, sandbox).mode1!;
     const cases = engine.floor_cases();
     setState(previous => ({ shiftCount: (previous?.shiftCount ?? 0) + 1, cases, shift }));
-  }, [engine]);
+  }, [engine, sandbox]);
 
   const update = useCallback((shift: ShiftStatus) => {
     setState(previous => previous && changed(previous.shift, shift) ? { ...previous, shift } : previous);
@@ -71,7 +74,15 @@ export function useMode1GameLoop(engine: ShiftEngine, { seed, layout }: { seed?:
     return true;
   }, [engine, open, update]);
 
-  const placed = useCallback((snapshot: EngineSnapshot) => update(snapshot.mode1!), [update]);
+  const placed = useCallback((snapshot: EngineSnapshot) => {
+    update(snapshot.mode1!);
+    const arrived = engine.floor_cases();
+    setState(previous => {
+      if (!previous) return previous;
+      const cases = stagedCases(previous.cases, arrived, snapshot.mode1!.wave);
+      return cases === previous.cases ? previous : { ...previous, cases };
+    });
+  }, [engine, update]);
   const ship = useCallback(() => update(engine.ship(performance.now()).mode1!), [engine, update]);
   const restart = useCallback(() => start(randomSeed()), [start]);
 
@@ -113,8 +124,21 @@ function randomSeed() {
   return crypto.getRandomValues(new BigUint64Array(1))[0];
 }
 
+/**
+ * The cases to lay out: the current wave's, in a stable order so each keeps its spot, then any
+ * earlier case that has come back to the floor. Unchanged (the same array) if nothing is new.
+ */
+export function stagedCases(previous: FloorCase[], arrived: FloorCase[], wave: number) {
+  const first = WAVE_CASES * (wave - 1);
+  const current = previous.some(floorCase => floorCase.id >= first) ? previous : arrived.filter(floorCase => floorCase.id >= first);
+  const returned = arrived.filter(floorCase => floorCase.on_floor && !current.some(({ id }) => id === floorCase.id));
+  return returned.length ? [...current, ...returned] : current;
+}
+
 function changed(previous: ShiftStatus, next: ShiftStatus) {
   return previous.phase !== next.phase
+    || previous.wave !== next.wave
     || previous.cases_on_floor !== next.cases_on_floor
-    || Math.ceil(previous.time_remaining_ms / 100) !== Math.ceil(next.time_remaining_ms / 100);
+    || Math.ceil(previous.time_remaining_ms / 100) !== Math.ceil(next.time_remaining_ms / 100)
+    || Math.floor(previous.elapsed_ms / 100) !== Math.floor(next.elapsed_ms / 100);
 }

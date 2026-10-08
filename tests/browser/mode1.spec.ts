@@ -29,18 +29,18 @@ async function open(page: Page, errors: string[]) {
   // Fake timers drive `performance.now()` and animation frames, so the test can jump the shift clock.
   await page.clock.install();
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto('/?seed=42');
+  await page.goto('/?mode=1&seed=42');
   await expect.poll(() => page.evaluate(() => !!window.__palletTest)).toBe(true);
 }
 
-test('runs a 60-second shift from the first pick, rejecting heavy-on-light, and ends it at 0:00 mid-drag', async ({ page }) => {
+test('runs a 60-second shift from the first pick, letting heavy crush light, and ends it at 0:00 mid-drag', async ({ page }) => {
   const errors: string[] = [];
   await open(page, errors);
   const timer = page.getByRole('timer', { name: 'Shift time remaining' });
   const status = page.locator('.placement-status');
   const label = page.locator('.viewport-label p');
   await expect(timer).toHaveText('1:00');
-  await expect(label).toHaveText('100 cases on the floor');
+  await expect(label).toHaveText('Wave 1 · 25 cases on the floor');
 
   // Inspecting the floor costs nothing: the clock waits for the first pick.
   await page.clock.fastForward(20_000);
@@ -49,14 +49,14 @@ test('runs a 60-second shift from the first pick, rejecting heavy-on-light, and 
 
   await drag(page, 'SKU-LT', await deckPoint(page, 24, 20));
   await expect(status).toHaveText(/^Placed Light Tall, .* at 0″\. 1 case on the pallet\.$/);
-  await expect(label).toHaveText('99 cases on the floor');
+  await expect(label).toHaveText('Wave 1 · 24 cases on the floor');
   await page.clock.fastForward(5_000);
   await expect(timer).toHaveText(/^0:5[45]$/);
 
-  // A Heavy Cube over the Light Tall's top is red; releasing returns it to the floor.
+  // A Heavy Cube may go on the Light Tall's top; it lands, crushing the Light Tall.
   await drag(page, 'SKU-HC', await deckPoint(page, 24, 20, 15));
-  await expect(status).toHaveText('Heavy Cube went back to its bay: heavy cases cannot rest on light or fragile ones.');
-  await expect(label).toHaveText('99 cases on the floor');
+  await expect(status).toHaveText(/^Placed Heavy Cube, .* at 15″\. 2 cases on the pallet\.$/);
+  await expect(label).toHaveText('Wave 1 · 23 cases on the floor');
 
   // Time runs out while a case is held: the drag is cancelled and the shift is scored.
   await drag(page, 'SKU-MQ', await deckPoint(page, 10, 10), { hold: true });
@@ -67,7 +67,8 @@ test('runs a 60-second shift from the first pick, rejecting heavy-on-light, and 
   await page.mouse.up();
   const result = page.getByRole('dialog', { name: 'Shift over' });
   await expect(result).toBeVisible();
-  await expect(result.locator('dd').nth(1)).toHaveText('1'); // cases placed
+  await expect(result.locator('.f3-table-row', { hasText: 'Cases stacked' }).locator('dd')).toHaveText(/^2 cartons \(/);
+  await expect(result).toContainText('1 case collapsed');
   await expect(page.getByRole('button', { name: 'Ship pallet' })).toBeDisabled();
 
   // The floor is closed.
@@ -76,13 +77,13 @@ test('runs a 60-second shift from the first pick, rejecting heavy-on-light, and 
   await page.mouse.down();
   await page.mouse.move(closed.x + 60, closed.y + 40, { steps: 6 });
   await page.mouse.up();
-  await expect(label).toHaveText('99 cases on the floor');
+  await expect(label).toHaveText('Wave 1 · 23 cases on the floor');
 
   // A new shift stages a fresh floor, its clock waiting again.
   await result.getByRole('button', { name: 'New shift' }).click();
   await expect(result).toBeHidden();
   await expect(timer).toHaveText('1:00');
-  await expect(label).toHaveText('100 cases on the floor');
+  await expect(label).toHaveText('Wave 1 · 25 cases on the floor');
   expect(errors).toEqual([]);
 });
 
@@ -100,7 +101,7 @@ test('ships the pallet early with its score', async ({ page }) => {
   expect(frozen).toMatch(/^0:(49|50)$/);
   await page.clock.fastForward(30_000);
   await expect(timer).toHaveText(frozen!);
-  await expect(result.locator('.final-score')).toHaveText(/^\d+$/);
-  await expect(result.locator('dd').nth(4)).toHaveText('0'); // no early finish bonus
+  await expect(result.locator('.final-score')).toHaveText(/^[\d,]+$/);
+  await expect(result.locator('.f3-table-row', { hasText: 'Early finish bonus' }).locator('dd')).toHaveText('+0 pts');
   expect(errors).toEqual([]);
 });

@@ -6,7 +6,7 @@ const GAP_IN = 3;
 
 /** A spot on the floor where one carton waits. */
 export interface StagingBay {
-  /** The Mode 1 floor case id; the bay's index in the sandbox. */
+  /** The Mode 1 floor case id; the bay's index in free placement. */
   id: number;
   sku: SkuDef;
   yaw: Yaw;
@@ -26,7 +26,7 @@ export function stagingBay(id: number, sku: SkuDef, yaw: Yaw, x: number, z: numb
   return { id, sku, yaw, position, bounds };
 }
 
-/** The sandbox floor, refilled after every placement: one carton of each SKU, lengths along Z, four behind the pallet and four in front. */
+/** The free-placement floor, refilled after every placement: one carton of each SKU, lengths along Z, four behind the pallet and four in front. */
 export const STAGING_BAYS: readonly StagingBay[] = [SKU_CATALOG.slice(0, 4), SKU_CATALOG.slice(4)].flatMap((row, i) => {
   const side = i === 0 ? -1 : 1;
   let x = -(row.reduce((sum, sku) => sum + sku.width_in, 0) + (row.length - 1) * GAP_IN) / 2;

@@ -43,6 +43,7 @@ fn build(seed: u64) -> (Pallet, Vec<(Placement, bool)>) {
             Err(rejection) => assert_eq!(check.rejection, Some(rejection), "seed {seed}"),
         }
         log.push((placement, committed.is_ok()));
+        assert!(pallet.is_stable(), "seed {seed}: the stack tips");
     }
     (pallet, log)
 }
@@ -95,13 +96,22 @@ fn quality_stays_within_bounds_and_under_the_crush_penalty_ceiling() {
             "seed {seed}: {}",
             score.quality_pct
         );
+        // Every crushed case docks something, and at most 15 points.
+        let crushed = f64::from(score.crushed_count);
+        assert!(
+            (score.crushed_count == 0) == (score.crush_penalty == 0.0)
+                && score.crush_penalty <= 15.0 * crushed,
+            "seed {seed}: {}% docked for {} crushed",
+            score.crush_penalty,
+            score.crushed_count
+        );
         // Interlocking can win back at most 10 points (SPEC-01 §2.4).
-        let ceiling = 110.0 - 15.0 * score.crushed_count as f64;
+        let ceiling = 110.0 - score.crush_penalty;
         assert!(
             score.quality_pct <= ceiling.max(0.0),
-            "seed {seed}: {}% with {} crushed",
+            "seed {seed}: {}% with {}% crush penalty",
             score.quality_pct,
-            score.crushed_count
+            score.crush_penalty
         );
         crushes += score.crushed_count;
         stacked += pallet

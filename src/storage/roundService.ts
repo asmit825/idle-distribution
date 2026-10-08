@@ -24,8 +24,10 @@ export const roundService = {
     const tx = db.transaction(['rounds', 'personal_bests'], 'readwrite');
     if (!await tx.objectStore('rounds').get(round.id)) {
       await tx.objectStore('rounds').add(round);
-      const best = await tx.objectStore('personal_bests').get(round.mode);
-      await tx.objectStore('personal_bests').put(updateBest(round, best));
+      if (!round.sandbox) {
+        const best = await tx.objectStore('personal_bests').get(round.mode);
+        await tx.objectStore('personal_bests').put(updateBest(round, best));
+      }
     }
     await tx.done;
   },
@@ -52,6 +54,7 @@ export const roundService = {
     const rounds = await tx.objectStore('rounds').getAll();
     const bests = new Map<RoundRecord['mode'], PersonalBestRecord>();
     for (const round of rounds.sort((a, b) => a.timestamp.localeCompare(b.timestamp) || a.id.localeCompare(b.id))) {
+      if (round.sandbox) continue;
       bests.set(round.mode, updateBest(round, bests.get(round.mode)));
     }
     await tx.objectStore('personal_bests').clear();

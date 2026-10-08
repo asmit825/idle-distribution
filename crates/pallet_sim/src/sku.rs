@@ -17,7 +17,7 @@ pub enum TapeType {
     PressureSensitiveTan,
 }
 
-/// Handling class; drives markings and the Mode 1 heavy-on-light rule.
+/// Handling class; drives the carton markings.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum HandlingClass {

@@ -7,7 +7,7 @@ test('boots, places a carton, and switches modes without console errors or warni
     if (message.type() === 'error' || message.type() === 'warning') problems.push(`${message.type()}: ${message.text()}`);
   });
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.goto('/?seed=42');
+  await page.goto('/?mode=1&seed=42');
   await expect(page.getByRole('status').first()).toHaveText('Engine initialized: v1.0.0');
   await expect(page.getByRole('img', { name: 'Interactive 48 by 40 inch stringer pallet' })).toBeVisible();
   await expect(page.getByText('WebGL is unavailable')).toHaveCount(0);
@@ -24,7 +24,7 @@ test('boots, places a carton, and switches modes without console errors or warni
   await expect(page.locator('.placement-status')).toHaveText('Placed Medium Square, 12″ × 12″, at 0″. 1 case on the pallet.');
 
   await page.getByRole('button', { name: 'Mode 2 · Conveyor' }).click();
-  await expect(page.getByLabel('Conveyor queue')).toHaveText(/\/ 10$/);
+  await expect(page.getByLabel('Conveyor queue')).toHaveText(/^\d+$/);
   await page.getByRole('button', { name: 'Mode 1 · Free staging' }).click();
   await expect(page.getByRole('timer')).toHaveText('1:00');
   expect(problems).toEqual([]);

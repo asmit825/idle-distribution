@@ -4,7 +4,8 @@ import type { EngineSnapshot } from '../../types/engine';
 import { ActionButtons, CaseInspector, QualityPanel, ShipButton, WarehouseFeed } from './DesktopDashboard';
 import type { ActiveCase, CaseActions, RoundHud } from './types';
 
-export type WarehouseTheme = 'industrial' | 'studio' | 'blueprint';
+export type WarehouseTheme = 'warehouse' | 'industrial' | 'studio' | 'blueprint';
+export const DEFAULT_THEME: WarehouseTheme = 'warehouse';
 
 function RepeatButton({ label, children, disabled, step }: { label: string; children: ReactNode; disabled: boolean; step(): void }) {
   const timeout = useRef<ReturnType<typeof setTimeout>>();
@@ -39,7 +40,7 @@ export function MobileHud({ round, snapshot, bays, active, actions, cameras, mes
       {active ? <CaseInspector active={active} /> : <div className="case-inspector"><p>Tap a carton to pick. Use arrows to aim, then Done to place.</p></div>}
       <div className="dpad" aria-label="Camera-relative 2 inch movement">
         {(['up', 'left', 'right', 'down'] as const).map((direction, i) => <div className={`dpad-${direction}`} key={direction}>
-          <RepeatButton label={`Nudge ${direction}`} disabled={!active?.holding || round.complete} step={() => actions.nudge(direction)}>{['↑', '←', '→', '↓'][i]}</RepeatButton>
+          <RepeatButton label={`Nudge ${direction}`} disabled={!active?.adjustable || round.complete} step={() => actions.nudge(direction)}>{['↑', '←', '→', '↓'][i]}</RepeatButton>
         </div>)}<span>2″</span>
       </div>
       <ActionButtons active={active} actions={actions} locked={round.complete} /><ShipButton round={round} />
@@ -49,14 +50,14 @@ export function MobileHud({ round, snapshot, bays, active, actions, cameras, mes
       <div className="drawer-heading"><h2>Warehouse menu</h2><button type="button" onClick={closeMenu} aria-label="Close warehouse menu">Close</button></div>
       {cameras}
       <label className="theme-picker">Warehouse theme<select value={theme} onChange={event => setTheme(event.target.value as WarehouseTheme)}>
-        <option value="industrial">Industrial Dock</option><option value="studio">Modern Studio</option><option value="blueprint">CAD Blueprint</option>
+        <option value="warehouse">Warehouse Floor</option><option value="industrial">Industrial Dock</option><option value="studio">Modern Studio</option><option value="blueprint">CAD Blueprint</option>
       </select></label>
       {storageControls}
       {round.sound}
-      <details><summary>Instructions</summary><p>Tap a waiting carton to pick it. Use the arrows to move in 2-inch steps relative to your camera; hold to repeat. Rotate or flip, then Done to place. Remove returns a held carton or removes an exposed placed carton. You can also drag directly.</p></details>
+      <details><summary>Instructions</summary><p>Tap a waiting carton to pick it. Use the arrows to move in 2-inch steps relative to your camera; hold to repeat. Rotate or flip, then Done to place. The placed carton stays selected: the arrows, Rotate, and Flip keep adjusting it until Done. Tap or drag a placed carton to adjust it again. Remove returns a held carton or removes an exposed placed carton. You can also drag directly.</p></details>
       <div className="drawer-metrics"><WarehouseFeed round={round} bays={bays} /><QualityPanel snapshot={snapshot} /></div>
       {confirmReset ? <div className="reset-confirmation"><p>Clear this run and reset the warehouse theme?</p>
-        <button type="button" onClick={() => { setTheme('industrial'); closeMenu(); round.restart(); }}>Confirm reset</button>
+        <button type="button" onClick={() => { setTheme(DEFAULT_THEME); closeMenu(); round.restart(); }}>Confirm reset</button>
         <button type="button" onClick={() => setConfirmReset(false)}>Keep playing</button></div>
         : <button type="button" onClick={() => setConfirmReset(true)}>Reset game data</button>}
     </dialog>

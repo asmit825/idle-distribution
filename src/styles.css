@@ -97,6 +97,14 @@ kbd { font: 10px ui-monospace, monospace; color: #8fa2b3; border: 1px solid #fff
 .red .signal { color: #ff5f62; }
 .yellow:not(.stopped) .signal::before, .red:not(.stopped) .signal::before { animation: conveyor-warning .9s infinite alternate; }
 @keyframes conveyor-warning { to { opacity: .25; } }
+.conveyor-telemetry.yellow:not(.stopped) { animation: telemetry-yellow .9s infinite alternate; }
+.conveyor-telemetry.red:not(.stopped) { animation: telemetry-red .5s infinite alternate; }
+@keyframes telemetry-yellow { to { border-color: #ffcc3b; box-shadow: 0 0 14px #ffcc3b66; } }
+@keyframes telemetry-red { to { border-color: #ff5f62; background: #3a1519dc; box-shadow: 0 0 18px #ff5f6299; } }
+.overflow-countdown { margin: 8px 0 0; font: 700 13px ui-monospace, monospace; color: #ff5f62; }
+.difficulty { display: inline-flex; margin-left: 10px; border: 1px solid #ffffff22; border-radius: 6px; overflow: hidden; vertical-align: middle; }
+.difficulty button { background: transparent; color: #8fa2b3; border: 0; padding: 3px 9px; font-size: 11px; text-transform: capitalize; cursor: pointer; }
+.difficulty button[aria-pressed='true'] { background: #2b6cff; color: #fff; }
 @media (max-width: 1200px) { .header .engine-status { display: none; } }
 @media (max-width: 650px) {
   .mode-switch { order: 3; width: 100%; }
@@ -111,7 +119,33 @@ kbd { font: 10px ui-monospace, monospace; color: #8fa2b3; border: 1px solid #fff
   .conveyor-telemetry dl { margin: 0; gap: 14px; }
   .conveyor-telemetry dt { display: none; }
 }
-@media (prefers-reduced-motion: reduce) { .signal::before { animation: none !important; } }
+@media (prefers-reduced-motion: reduce) { .signal::before, .conveyor-telemetry { animation: none !important; } }
 
 .sound-toggle { white-space: nowrap; }
 @media (max-width: 650px) { .mode2 .brand { flex: 1; } .mode2 .shift-controls { order: 2; } .sound-toggle { order: 2; margin-left: auto; } }
+
+.smoke-break { height: 100dvh; min-height: 320px; display: grid; grid-template-rows: 70px minmax(0, 1fr); gap: 8px; padding: 8px; background: hsl(220, 20%, 8%);
+  cursor: pointer; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+.smoke-break .hud-command { grid-row: 1; }
+.smoke-viewport { position: relative; min-height: 0; border-radius: 8px; overflow: hidden; }
+.smoke-stage { position: absolute; inset: 0; }
+.smoke-brief { position: absolute; top: 12px; left: 12px; width: min(300px, calc(100% - 24px)); }
+.smoke-brief h2 { font-size: 17px; margin: 10px 0; }
+.smoke-brief p { margin: 0; font-size: 12px; line-height: 1.6; color: #9caebc; }
+.smoke-tally { position: absolute; right: 12px; bottom: 12px; width: 200px; display: grid; gap: 8px; }
+.smoke-tally strong { font-size: 48px; line-height: 1; color: var(--hud-green); }
+.smoke-tally meter { margin-bottom: 4px; }
+.smoke-result { position: absolute; inset: 0; margin: auto; height: fit-content; width: min(380px, calc(100% - 24px)); padding: 24px; text-align: center; animation: result-enter .2s ease-out; }
+.smoke-result h2 { font-size: 24px; margin: 8px 0; }
+.smoke-result p { color: #9caebc; font-size: 13px; margin: 0 0 18px; }
+.smoke-result button { cursor: pointer; }
+.smoke-result button:disabled { opacity: .5; cursor: default; }
+.smoke-fallback { position: absolute; inset: auto 0 50% 0; text-align: center; color: #9caebc; }
+@media (max-width: 640px) {
+  .smoke-break { grid-template-rows: auto minmax(0, 1fr); }
+  .smoke-brief { padding: 12px; }
+  .smoke-brief h2 { font-size: 15px; margin: 6px 0; }
+  .smoke-tally { width: auto; left: 12px; grid-template-columns: auto 1fr; align-items: center; gap: 6px 12px; padding: 12px; }
+  .smoke-tally strong { font-size: 28px; justify-self: end; }
+  .smoke-tally meter { margin: 0; }
+}

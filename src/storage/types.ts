@@ -13,6 +13,8 @@ export interface RoundRecord {
   stability_index_pct: number; quality_pct: number; composite_score: number;
   grade: EngineSnapshot['grade']; crush_count: number; overhang_inches: number;
   diversions_count?: number; estop_triggered?: boolean;
+  /** Played as a sandbox: kept in the gallery, but never counted toward bests or career stats. */
+  sandbox?: true;
   pallet_snapshot: PlacedCaseSnapshot[];
   end_reason: ShiftEnd | 'estop'; final_score: number;
 }

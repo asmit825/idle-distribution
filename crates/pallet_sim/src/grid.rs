@@ -33,13 +33,35 @@ impl Rect {
     }
 
     pub fn overlap_area(&self, other: &Rect) -> i64 {
-        let width = self.x1.min(other.x1) - self.x0.max(other.x0);
-        let depth = self.y1.min(other.y1) - self.y0.max(other.y0);
-        if width <= 0 || depth <= 0 {
-            0
-        } else {
-            i64::from(width) * i64::from(depth)
-        }
+        self.intersection(other).map_or(0, |overlap| overlap.area())
+    }
+
+    /// The shared region, if it has any area.
+    pub fn intersection(&self, other: &Rect) -> Option<Rect> {
+        let overlap = Rect {
+            x0: self.x0.max(other.x0),
+            y0: self.y0.max(other.y0),
+            x1: self.x1.min(other.x1),
+            y1: self.y1.min(other.y1),
+        };
+        (overlap.x0 < overlap.x1 && overlap.y0 < overlap.y1).then_some(overlap)
+    }
+
+    /// The point of the rectangle nearest `(x, y)`.
+    pub fn clamp(&self, (x, y): (f64, f64)) -> (f64, f64) {
+        (
+            x.clamp(f64::from(self.x0), f64::from(self.x1)),
+            y.clamp(f64::from(self.y0), f64::from(self.y1)),
+        )
+    }
+
+    pub fn corners(&self) -> [(i32, i32); 4] {
+        [
+            (self.x0, self.y0),
+            (self.x1, self.y0),
+            (self.x1, self.y1),
+            (self.x0, self.y1),
+        ]
     }
 
     pub fn center(&self) -> (f64, f64) {
@@ -163,9 +185,9 @@ pub enum Status {
 pub enum Rejection {
     AboveCeiling,
     ExcessOverhang,
+    /// The case, or one beneath it, would carry its weight past the edge of what holds it up
+    /// and tip over.
     Unsupported,
-    /// Mode 1: a heavy case resting directly on a light or fragile one.
-    HeavyOnLight,
 }
 
 impl Rejection {
@@ -175,7 +197,6 @@ impl Rejection {
             Rejection::AboveCeiling => "above_ceiling",
             Rejection::ExcessOverhang => "excess_overhang",
             Rejection::Unsupported => "unsupported",
-            Rejection::HeavyOnLight => "heavy_on_light",
         }
     }
 }
@@ -187,7 +208,7 @@ pub struct Validation {
     /// Where the case's base would settle, in inches above the deck.
     pub elevation_in: i32,
     pub overhang_in: i32,
-    /// Share of the base hanging over air, 0–1.
+    /// Share of the base hanging over air, 0–1. Any share is fine while the case balances.
     pub unsupported_fraction: f64,
     /// Intact cases this placement would crush.
     pub would_crush: u32,

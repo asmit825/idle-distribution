@@ -33,11 +33,15 @@ export function validateRound(value: unknown): asserts value is RoundRecord {
   integer(value.cases_placed, 0, 1000); integer(value.crush_count, 0, value.cases_placed);
   number(value.overhang_inches, 0, 2);
   requireValue(['S', 'A', 'B', 'C', 'F'].includes(String(value.grade)), 'grade');
+  requireValue(value.sandbox === undefined || value.sandbox === true, 'sandbox flag');
+  const sandbox = value.sandbox === true;
   if (value.mode === 'free_staging_100') {
-    requireValue(['time_up', 'shipped', 'all_placed'].includes(String(value.end_reason)), 'shift ending');
-    number(value.duration_ms, 0, 60000);
+    // A sandbox shift has no clock to run out, and its endless waves never all get placed.
+    requireValue((sandbox ? ['shipped'] : ['time_up', 'shipped', 'all_placed']).includes(String(value.end_reason)), 'shift ending');
+    if (!sandbox) number(value.duration_ms, 0, 60000);
   } else {
-    requireValue(value.end_reason === 'estop' || value.end_reason === 'shipped', 'conveyor ending');
+    // Nothing diverts on a sandbox line, so it can only ship.
+    requireValue(value.end_reason === 'shipped' || (!sandbox && value.end_reason === 'estop'), 'conveyor ending');
     integer(value.diversions_count, 0, 5);
     requireValue(typeof value.estop_triggered === 'boolean' && value.estop_triggered === (value.end_reason === 'estop'), 'Estop flag');
   }

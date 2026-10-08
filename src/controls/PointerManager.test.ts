@@ -29,6 +29,8 @@ const handlers: PointerHandlers<Target> = {
   rotate: () => log.push('rotate'),
   flip: () => log.push('flip'),
   nudge: direction => log.push(`nudge ${direction}`),
+  remove: () => log.push('remove'),
+  confirm: () => log.push('confirm'),
 };
 
 beforeEach(() => {
@@ -128,8 +130,8 @@ it('cancels the drag when the browser cancels the pointer', () => {
   expect(log).toEqual(['dragStart staged-carton', 'move 120,100', 'cancel']);
 });
 
-it('rotates on R and flips on F while dragging, ignoring repeats, shortcuts, and idle presses', () => {
-  fire(keys, 'keydown', { key: 'r' });
+it('rotates on R and flips on F, dragging or not, ignoring repeats and shortcuts', () => {
+  fire(keys, 'keydown', { key: 'r' }); // the selected case
   pointer('down', 200, 150);
   pointer('move', 220, 150);
   const rotate = fire(keys, 'keydown', { key: 'R' });
@@ -137,11 +139,11 @@ it('rotates on R and flips on F while dragging, ignoring repeats, shortcuts, and
   fire(keys, 'keydown', { key: 'r', repeat: true });
   fire(keys, 'keydown', { key: 'r', metaKey: true });
   fire(keys, 'keydown', { key: 'f' });
-  expect(log).toEqual(['dragStart staged-carton', 'move 120,100', 'rotate', 'flip']);
+  expect(log).toEqual(['rotate', 'dragStart staged-carton', 'move 120,100', 'rotate', 'flip']);
 });
 
-it('nudges the held case one step per arrow or WASD press while dragging, repeating while held', () => {
-  fire(keys, 'keydown', { key: 'ArrowUp' });
+it('nudges one step per arrow or WASD press, dragging or not, repeating while held', () => {
+  fire(keys, 'keydown', { key: 'ArrowUp' }); // the selected case
   pointer('down', 200, 150);
   pointer('move', 220, 150);
   const up = fire(keys, 'keydown', { key: 'ArrowUp' });
@@ -152,10 +154,26 @@ it('nudges the held case one step per arrow or WASD press while dragging, repeat
   pointer('up', 220, 150);
   fire(keys, 'keydown', { key: 'd' });
   expect(log).toEqual([
-    'dragStart staged-carton', 'move 120,100',
+    'nudge up', 'dragStart staged-carton', 'move 120,100',
     'nudge up', 'nudge up', 'nudge left', 'nudge down', 'nudge right', 'nudge up', 'nudge left', 'nudge down', 'nudge right',
-    'drop',
+    'drop', 'nudge right',
   ]);
+});
+
+it('removes on Delete or Backspace and confirms on Escape or Enter, leaving fields and buttons alone', () => {
+  expect(fire(keys, 'keydown', { key: 'Delete' }).defaultPrevented).toBe(true);
+  fire(keys, 'keydown', { key: 'Backspace' });
+  fire(keys, 'keydown', { key: 'Backspace', repeat: true });
+  fire(keys, 'keydown', { key: 'Escape' });
+  fire(keys, 'keydown', { key: 'Enter' });
+  // Typing in a field, or pressing a focused button, means that control.
+  for (const key of ['Backspace', 'ArrowLeft', 'r']) fire(keys, 'keydown', { key, target: { tagName: 'INPUT' } });
+  fire(keys, 'keydown', { key: 'Enter', target: { tagName: 'BUTTON' } });
+  // Only the drop ends a drag: Escape and Enter leave the held case alone.
+  pointer('down', 200, 150);
+  pointer('move', 220, 150);
+  fire(keys, 'keydown', { key: 'Escape' });
+  expect(log).toEqual(['remove', 'remove', 'confirm', 'confirm', 'dragStart staged-carton', 'move 120,100']);
 });
 
 it('rotates on the wheel while dragging, once per burst of trackpad events; otherwise the wheel zooms', () => {
@@ -201,6 +219,8 @@ it('calls handlers as methods, so a class instance keeps `this`', () => {
     rotate() { this.calls.push('rotate'); }
     flip() { this.calls.push('flip'); }
     nudge() { this.calls.push('nudge'); }
+    remove() { this.calls.push('remove'); }
+    confirm() { this.calls.push('confirm'); }
   }
   manager.dispose();
   const recorder = new Recorder();

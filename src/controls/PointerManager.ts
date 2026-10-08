@@ -12,6 +12,12 @@ const NUDGE_KEYS: Record<string, NudgeDirection> = {
   arrowup: 'up', arrowdown: 'down', arrowleft: 'left', arrowright: 'right', w: 'up', s: 'down', a: 'left', d: 'right',
 };
 
+/** One-shot keys while dragging, then while a case is selected, by lowercased `KeyboardEvent.key`. */
+const DRAG_KEYS: Record<string, 'rotate' | 'flip'> = { r: 'rotate', f: 'flip' };
+const SELECTION_KEYS: Record<string, 'rotate' | 'flip' | 'remove' | 'confirm'> = {
+  ...DRAG_KEYS, delete: 'remove', backspace: 'remove', escape: 'confirm', enter: 'confirm',
+};
+
 /** CSS pixels from the element's top-left corner. */
 export interface ScreenPoint {
   x: number;
@@ -34,10 +40,15 @@ export interface PointerHandlers<T> {
   drop(): void;
   /** The drag was interrupted; nothing should be placed. */
   cancel(): void;
+  /** Turns the held case, or the selected one. */
   rotate(): void;
   flip(): void;
-  /** One 2-inch step of the held case, relative to the camera. */
+  /** One 2-inch step of the held case, or the selected one, relative to the camera. */
   nudge(direction: NudgeDirection): void;
+  /** Takes the selected case off the pallet. */
+  remove(): void;
+  /** Accepts the selected case where it is. */
+  confirm(): void;
 }
 
 interface Press<T> {
@@ -168,10 +179,13 @@ export class PointerManager<T> {
     this.handlers.rotate();
   };
 
-  /** While dragging: R rotates, F flips, and arrows or WASD nudge (repeating while held). */
+  /**
+   * For the held case, or the selected one: R rotates, F flips, and arrows or WASD nudge
+   * (repeating while held). Delete or Backspace removes the selected case; Escape or Enter
+   * accepts it.
+   */
   private readonly onKeyDown = (event: KeyboardEvent) => {
-    if (!this.press?.dragging || event.metaKey || event.ctrlKey || event.altKey) return;
-    if (isEditable(event.target)) return;
+    if (event.metaKey || event.ctrlKey || event.altKey || isEditable(event.target)) return;
     const key = event.key.toLowerCase();
     const direction = NUDGE_KEYS[key];
     if (direction) {
@@ -179,16 +193,21 @@ export class PointerManager<T> {
       this.handlers.nudge(direction);
       return;
     }
-    if (event.repeat || (key !== 'r' && key !== 'f')) return;
+    const action = event.repeat ? undefined : this.press?.dragging ? DRAG_KEYS[key]
+      : key === 'enter' && isButton(event.target) ? undefined : SELECTION_KEYS[key];
+    if (!action) return;
     event.preventDefault();
-    if (key === 'r') this.handlers.rotate();
-    else this.handlers.flip();
+    this.handlers[action]();
   };
 
   private local(event: PointerEvent): ScreenPoint {
     const rect = this.element.getBoundingClientRect();
     return { x: event.clientX - rect.left, y: event.clientY - rect.top };
   }
+}
+
+function isButton(target: EventTarget | null) {
+  return ['BUTTON', 'A'].includes((target as Partial<HTMLElement> | null)?.tagName ?? '');
 }
 
 function isEditable(target: EventTarget | null) {

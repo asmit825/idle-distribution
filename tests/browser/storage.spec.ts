@@ -1,7 +1,7 @@
 import { expect, test } from '@playwright/test';
 
 test('round service persists snapshots once and tracks independent personal bests across reloads', async ({ page }) => {
-  await page.goto('/?seed=42');
+  await page.goto('/?mode=1&seed=42');
   const saved = await page.evaluate(async () => {
     const path = '/src/storage/roundService.ts';
     const { roundService } = await import(/* @vite-ignore */ path);
@@ -34,7 +34,7 @@ test('round service persists snapshots once and tracks independent personal best
 });
 
 test('backup round-trip merges by UUID and rejects malformed data without changing history', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?mode=1');
   const result = await page.evaluate(async () => {
     const path = '/src/storage/roundService.ts';
     const { roundService } = await import(/* @vite-ignore */ path);
@@ -73,7 +73,7 @@ test('backup round-trip merges by UUID and rejects malformed data without changi
 
 test('finishing a pallet automatically saves its engine coordinates and telemetry exactly once', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/?seed=42');
+  await page.goto('/?mode=1&seed=42');
   await page.getByRole('button', { name: 'Open warehouse menu' }).click();
   await page.getByRole('button', { name: 'Top', exact: true }).click();
   await page.getByRole('button', { name: 'Close warehouse menu' }).click();
@@ -100,7 +100,7 @@ test('finishing a pallet automatically saves its engine coordinates and telemetr
 
 test('gallery browses completed pallets with orbit inspection and per-mode personal bests', async ({ page }, testInfo) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/');
+  await page.goto('/?mode=1');
   await page.evaluate(async () => {
     const path = '/src/storage/roundService.ts';
     const { roundService } = await import(/* @vite-ignore */ path);
@@ -143,7 +143,7 @@ test('gallery browses completed pallets with orbit inspection and per-mode perso
 
 test('exports history into a fresh browser and requires two confirmations before clearing it', async ({ page, browser }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  await page.goto('/?seed=42');
+  await page.goto('/?mode=1&seed=42');
   await page.getByRole('button', { name: 'Ship pallet' }).click();
   await expect(page.getByRole('status', { name: 'Round save status' })).toHaveText('Round saved on this device.');
   await page.getByRole('dialog', { name: 'Pallet shipped' }).getByRole('button', { name: 'Saved data', exact: true }).click();
@@ -157,7 +157,7 @@ test('exports history into a fresh browser and requires two confirmations before
   const fresh = await browser.newContext({ viewport: { width: 390, height: 844 } });
   try {
     const other = await fresh.newPage();
-    await other.goto('http://127.0.0.1:4173/');
+    await other.goto('http://127.0.0.1:4173/?mode=1');
     await other.getByRole('button', { name: 'Open warehouse menu' }).click();
     await other.getByRole('button', { name: 'Saved data', exact: true }).click();
     const data = other.getByRole('dialog', { name: 'Saved data' });
@@ -189,7 +189,7 @@ test('exports history into a fresh browser and requires two confirmations before
 });
 
 test('preserves utilization above 100 percent for a valid overhanging pallet', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?mode=1');
   const saved = await page.evaluate(async () => {
     const path = '/src/storage/roundService.ts';
     const { roundService } = await import(/* @vite-ignore */ path);
@@ -212,7 +212,7 @@ test('preserves utilization above 100 percent for a valid overhanging pallet', a
 });
 
 test('an empty pallet does not claim a perfect personal best quality', async ({ page }) => {
-  await page.goto('/');
+  await page.goto('/?mode=1');
   const bests = await page.evaluate(async () => {
     const path = '/src/storage/roundService.ts';
     const { roundService } = await import(/* @vite-ignore */ path);

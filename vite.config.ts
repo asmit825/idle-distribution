@@ -4,6 +4,7 @@ import wasm from 'vite-plugin-wasm';
 import topLevelAwait from 'vite-plugin-top-level-await';
 
 export default defineConfig({
+  base: process.env.BASE_URL ?? (process.env.PALLET_BROWSER_TEST === '1' ? '/' : '/idle-distribution/'),
   plugins: [react(), wasm(), topLevelAwait()],
   // Browser tests use a fixed build; cloud-sync file events must not reload mid-gesture.
   server: process.env.PALLET_BROWSER_TEST === '1' ? { watch: null } : undefined,
