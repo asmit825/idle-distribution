@@ -77,7 +77,7 @@ export function DesktopDashboard({ round, snapshot, bays, active, actions, camer
 }) {
   return <>
     <header className="hud-command hud-panel">
-      <div className="hud-brand"><span className="eyebrow">IDLE DISTRIBUTION</span><strong>Warehouse console</strong></div>
+      <div className="hud-brand"><span className="eyebrow">IDLE DISTRIBUTION // idleAustin</span><strong>Warehouse console</strong></div>
       {round.modeSwitch}
       <div className={`shift-clock ${round.complete ? 'complete' : 'running'}`} id="timer" role="timer" aria-label={round.timerLabel}>{round.clock}</div>
       {compact ? <><span className="mobile-grade">{displayGrade(snapshot)} · {snapshot.composite_score} pts</span>{mobileMenu}</> : cameras}

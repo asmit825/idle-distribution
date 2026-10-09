@@ -28,7 +28,7 @@ export function LandingPortal({ onSelectMode, seed, galleryOpen = false, closeGa
         <span className="landing-brand-icon"><Box size={22} strokeWidth={1.6} aria-hidden="true" /></span>
         <span className="landing-brand-meta"><strong>IDLE DISTRIBUTION<span className="landing-brand-pill">STAGING TERMINAL</span></strong><span>AUTONOMOUS PALLET STAGING &amp; CONVEYOR LINE SORTER</span></span>
       </a>
-      <div className="landing-terminal-status"><span><i />LINE 4B: ONLINE</span><span>PALLET: 48″ × 40″</span></div>
+      <div className="landing-terminal-status"><span><i />idleAustin (idle, but operational)</span><span>LINE 4B: ONLINE</span><span>PALLET: 48″ × 40″</span></div>
     </header>
     <main className="landing-main">
       <div className="v3-portal-grid">
@@ -38,7 +38,7 @@ export function LandingPortal({ onSelectMode, seed, galleryOpen = false, closeGa
       </div>
     </main>
     <footer className="landing-bottom-bar">
-      <div className="landing-telemetry"><span><i />Pallet engine ready</span><span>{stats.status === 'ready' ? 'Saved on this device' : stats.status === 'loading' ? 'Loading saved builds…' : 'Saved builds unavailable'}</span><span>Target height: 60″ ceiling</span><span>{VERSION_LABEL}</span></div>
+      <div className="landing-telemetry"><span><i />Pallet engine ready</span><span>{stats.status === 'ready' ? 'Saved on this device' : stats.status === 'loading' ? 'Loading saved builds…' : 'Saved builds unavailable'}</span><span>Target height: 60″ ceiling</span><span>Mostly idle. There probably was an easier way to do this.</span><span>{VERSION_LABEL}</span></div>
       <button type="button" className="landing-sound" aria-pressed={sound} disabled={!sfx.supported} onClick={() => {
         const enabled = !sound; sfx.setEnabled(enabled); setSound(enabled); if (enabled) sfx.playClick();
       }}>{sound ? <Volume2 size={15} aria-hidden="true" /> : <VolumeX size={15} aria-hidden="true" />}Sound {sound ? 'on' : 'off'}</button>

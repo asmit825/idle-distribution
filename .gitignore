@@ -38,3 +38,4 @@ pnpm-debug.log*
 # Project Specific Ignored Folders
 reference-docs/
 .kennel-hub/
+.style-guide/

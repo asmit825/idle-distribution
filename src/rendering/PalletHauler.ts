@@ -26,6 +26,9 @@ let cachedGltfScene: Group | null = null;
 let gltfLoadingPromise: Promise<Group | null> | null = null;
 let cachedSpriteTexture: Texture | null = null;
 
+const baseUrl = (typeof import.meta !== 'undefined' && import.meta.env?.BASE_URL) ? import.meta.env.BASE_URL : '/';
+export const assetUrl = (path: string) => `${baseUrl.replace(/\/$/, '')}/${path.replace(/^\//, '')}`;
+
 /** Fork length, and where the fork heels sit relative to the hauler's origin (inches; forks point +X). */
 const FORK_LENGTH = 42;
 /** Origin x at which the forks sit fully under a pallet centered at the scene origin. */
@@ -54,7 +57,7 @@ export function getHaulerRenderMode(): HaulerRenderMode {
 }
 
 /** Preload the 3D GLB model asset for instant instantiation. */
-export async function preloadHaulerModel(url = '/models/pallet_hauler.glb'): Promise<Group | null> {
+export async function preloadHaulerModel(url = assetUrl('models/pallet_hauler.glb')): Promise<Group | null> {
   if (cachedGltfScene) return cachedGltfScene;
   if (gltfLoadingPromise) return gltfLoadingPromise;
 
@@ -96,9 +99,9 @@ export interface HaulerClips { idle: AnimationClip; walk: AnimationClip; ride: A
 export interface HaulerAssets { model: Group; clips: HaulerClips }
 
 const CLIP_URLS: Record<keyof HaulerClips, string> = {
-  idle: '/models/animations/clip-idle.glb',
-  walk: '/models/animations/clip-walk.glb',
-  ride: '/models/animations/clip-breathe-look.glb',
+  idle: assetUrl('models/animations/clip-idle.glb'),
+  walk: assetUrl('models/animations/clip-walk.glb'),
+  ride: assetUrl('models/animations/clip-breathe-look.glb'),
 };
 let cachedAssets: HaulerAssets | null = null;
 let assetsPromise: Promise<HaulerAssets | null> | null = null;
@@ -258,7 +261,7 @@ export function createSpriteHauler(): Group {
   if (!cachedSpriteTexture && typeof window !== 'undefined') {
     try {
       const loader = new TextureLoader();
-      cachedSpriteTexture = loader.load('/sprites/austin-hauler-sprite.png');
+      cachedSpriteTexture = loader.load(assetUrl('sprites/austin-hauler-sprite.png'));
     } catch {
       // ignore
     }
