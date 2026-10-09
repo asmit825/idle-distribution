@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Box, Volume2, VolumeX } from 'lucide-react';
+import { Box, Home, Volume2, VolumeX } from 'lucide-react';
 import { AmbientPallet } from './AmbientPallet';
 import { HeroConsole } from './HeroConsole';
 import { ModeTilesStack, type LandingMode } from './ModeTilesStack';
@@ -24,10 +24,27 @@ export function LandingPortal({ onSelectMode, seed, galleryOpen = false, closeGa
     <AmbientPallet seed={seed} />
     <div className="landing-ambient-overlay" aria-hidden="true" /><div className="landing-grid-mesh" aria-hidden="true" />
     <header className="landing-top-bar">
-      <a className="landing-brand" href={window.location.pathname} aria-label="Idle Distribution home" onClick={event => { event.preventDefault(); closeGallery(); }}>
-        <span className="landing-brand-icon"><Box size={22} strokeWidth={1.6} aria-hidden="true" /></span>
-        <span className="landing-brand-meta"><strong>IDLE DISTRIBUTION<span className="landing-brand-pill">STAGING TERMINAL</span></strong><span>AUTONOMOUS PALLET STAGING &amp; CONVEYOR LINE SORTER</span></span>
-      </a>
+      <div className="landing-brand">
+        <a
+          className="landing-brand-icon"
+          href="https://idlemullet.com"
+          aria-label="Return to idleMullet homepage"
+          title="Return to idleMullet (idlemullet.com)"
+          onClick={() => sfx.playClick()}
+        >
+          <Box size={22} strokeWidth={1.6} className="brand-icon-box" aria-hidden="true" />
+          <Home size={22} strokeWidth={1.6} className="brand-icon-home" aria-hidden="true" />
+        </a>
+        <a
+          className="landing-brand-meta"
+          href={window.location.pathname}
+          aria-label="Idle Distribution staging terminal"
+          onClick={event => { event.preventDefault(); closeGallery(); }}
+        >
+          <strong>IDLE DISTRIBUTION<span className="landing-brand-pill">STAGING TERMINAL</span></strong>
+          <span>AUTONOMOUS PALLET STAGING &amp; CONVEYOR LINE SORTER</span>
+        </a>
+      </div>
       <div className="landing-terminal-status"><span><i />idleAustin (idle, but operational)</span><span>LINE 4B: ONLINE</span><span>PALLET: 48″ × 40″</span></div>
     </header>
     <main className="landing-main">

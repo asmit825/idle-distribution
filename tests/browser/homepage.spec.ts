@@ -158,3 +158,30 @@ test('keeps the terminal controls usable without horizontal overflow on narrow s
     await page.screenshot({ path: testInfo.outputPath(`homepage-${size.width}x${size.height}.png`), fullPage: true });
   }
 });
+
+test('top-left brand box links to idlemullet.com and reveals home icon on hover', async ({ page }) => {
+  await page.goto('/');
+  const homeLink = page.getByRole('link', { name: 'Return to idleMullet homepage' });
+  await expect(homeLink).toBeVisible();
+  await expect(homeLink).toHaveAttribute('href', 'https://idlemullet.com');
+  await expect(homeLink).toHaveAttribute('title', 'Return to idleMullet (idlemullet.com)');
+
+  const boxIcon = homeLink.locator('.brand-icon-box');
+  const homeIcon = homeLink.locator('.brand-icon-home');
+  await expect(boxIcon).toBeVisible();
+  await expect(homeIcon).toBeAttached();
+
+  const initialBoxOpacity = await boxIcon.evaluate(el => window.getComputedStyle(el).opacity);
+  const initialHomeOpacity = await homeIcon.evaluate(el => window.getComputedStyle(el).opacity);
+  expect(Number(initialBoxOpacity)).toBe(1);
+  expect(Number(initialHomeOpacity)).toBe(0);
+
+  await homeLink.hover();
+  await expect.poll(async () => {
+    return homeIcon.evaluate(el => Number(window.getComputedStyle(el).opacity));
+  }).toBe(1);
+  await expect.poll(async () => {
+    return boxIcon.evaluate(el => Number(window.getComputedStyle(el).opacity));
+  }).toBe(0);
+});
+
