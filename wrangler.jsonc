@@ -7,13 +7,15 @@
     "directory": "./dist",
     "binding": "ASSETS"
   },
+  // Only the game's subpath. The idlemullet repo's worker owns the rest of idlemullet.com
+  // (idlemullet.com/*); Cloudflare sends each request to the most specific matching route.
   "routes": [
     {
-      "pattern": "idlemullet.com/*",
+      "pattern": "idlemullet.com/idle-distribution*",
       "zone_name": "idlemullet.com"
     },
     {
-      "pattern": "*.idlemullet.com/*",
+      "pattern": "www.idlemullet.com/idle-distribution*",
       "zone_name": "idlemullet.com"
     }
   ]

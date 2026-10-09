@@ -2,12 +2,8 @@ export default {
   async fetch(request, env) {
     const url = new URL(request.url);
 
-    // 1. Root redirect: Forward root visits to default game app
-    if (url.pathname === '/' || url.pathname === '') {
-      return Response.redirect('https://idlemullet.com/idle-distribution', 302);
-    }
-
-    // 2. Subpath routing for idle-distribution
+    // Only /idle-distribution* is routed here (see wrangler.jsonc); the idlemullet.com homepage
+    // is its own worker in the idlemullet repo.
     if (url.pathname.startsWith('/idle-distribution')) {
       // Strip /idle-distribution prefix to map directly to files in dist
       const subpath = url.pathname.replace(/^\/idle-distribution/, '') || '/';
