@@ -37,6 +37,7 @@
   padding: 10px 16px;
 }
 .hud-brand { display: grid; gap: 4px; margin-right: auto; }
+.hud-brand .eyebrow { text-transform: none; }
 .hud-brand strong { font-family: var(--as-font-heading, sans-serif); font-size: 14px; letter-spacing: -0.02em; }
 .hud-command .engine-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
 .hud-command .camera-presets { position: static; }

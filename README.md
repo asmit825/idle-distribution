@@ -1,4 +1,4 @@
-# Idle Distribution
+# idleDistribution
 
 A browser game about building warehouse pallets: stack cartons high and stable without crushing them, against the clock. A Rust physics engine compiled to WebAssembly runs the stacking, and React + Three.js draw it.
 

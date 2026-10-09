@@ -23,7 +23,7 @@ export function DataPortabilityModal({ close }: { close(): void }) {
       <button type="button" disabled={busy} onClick={() => void run(async () => {
         const backup = await roundService.exportData();
         const url = URL.createObjectURL(new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' }));
-        const link = document.createElement('a'); link.href = url; link.download = 'idle-distribution-backup.json'; link.click();
+        const link = document.createElement('a'); link.href = url; link.download = 'idleDistribution-backup.json'; link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
         return `Exported ${backup.rounds.length} round${backup.rounds.length === 1 ? '' : 's'}.`;
       })}>Export All Data (.json)</button>

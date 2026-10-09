@@ -67,7 +67,7 @@ export function SmokeBreakGame({ finish }: { finish(): void }) {
   const plural = (n: number) => `${n} ${n === 1 ? 'cigarette' : 'cigarettes'}`;
   return <main className="smoke-break" aria-label="Smoke break" onPointerDown={tap}>
     <header className="hud-command hud-panel">
-      <div className="hud-brand"><span className="eyebrow">IDLE DISTRIBUTION · BREAK AREA</span><strong>Smoke break simulator</strong></div>
+      <div className="hud-brand"><span className="eyebrow">idleDistribution · BREAK AREA</span><strong>Smoke break simulator</strong></div>
       <div className={`shift-clock ${done ? 'complete' : 'running'}`} role="timer" aria-label="Smoke break time remaining">0:{String(seconds).padStart(2, '0')}</div>
     </header>
     <section className="smoke-viewport" aria-label="Break area">
