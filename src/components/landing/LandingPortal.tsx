@@ -38,10 +38,10 @@ export function LandingPortal({ onSelectMode, seed, galleryOpen = false, closeGa
         <a
           className="landing-brand-meta"
           href={window.location.pathname}
-          aria-label="Idle Distribution staging terminal"
+          aria-label="idleDistribution staging terminal"
           onClick={event => { event.preventDefault(); closeGallery(); }}
         >
-          <strong>IDLE DISTRIBUTION<span className="landing-brand-pill">STAGING TERMINAL</span></strong>
+          <strong>idleDistribution<span className="landing-brand-pill">STAGING TERMINAL</span></strong>
           <span>AUTONOMOUS PALLET STAGING &amp; CONVEYOR LINE SORTER</span>
         </a>
       </div>

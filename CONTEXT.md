@@ -1,4 +1,4 @@
-# Domain Model: Idle Distribution
+# Domain Model: idleDistribution
 
 ## Glossary
 

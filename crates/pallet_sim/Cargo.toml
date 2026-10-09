@@ -2,7 +2,7 @@
 name = "pallet_sim"
 version = "1.0.0"
 edition = "2021"
-description = "Main-thread simulation engine for Idle Distribution"
+description = "Main-thread simulation engine for idleDistribution"
 publish = false
 
 [lib]
